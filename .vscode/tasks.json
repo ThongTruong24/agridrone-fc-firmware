@@ -3,6 +3,153 @@
     // for the documentation about the tasks.json format
     "version": "2.0.0",
     "tasks": [
+	{
+		"label": "PX4 NuttX: Configure",
+		"type": "process",
+		"command": "cmake",
+		"args": [
+			"-S", "${workspaceFolder}",
+			"-B", "${workspaceFolder}/build/${input:px4FirmwareTarget}",
+			"-G", "Ninja",
+			"-DCONFIG=${input:px4FirmwareTarget}",
+			"-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+		],
+		"problemMatcher": [],
+		"presentation": {
+			"reveal": "always",
+			"panel": "shared",
+			"clear": true
+		}
+	},
+	{
+		"label": "PX4 NuttX: Build",
+		"type": "process",
+		"command": "cmake",
+		"args": [
+			"--build", "${workspaceFolder}/build/${input:px4FirmwareTarget}",
+			"--parallel"
+		],
+		"options": {
+			"env": {
+				"CCACHE_DIR": "${workspaceFolder}/build/.ccache"
+			}
+		},
+		"dependsOn": "PX4 NuttX: Configure",
+		"dependsOrder": "sequence",
+		"group": {
+			"kind": "build",
+			"isDefault": true
+		},
+		"problemMatcher": "$gcc",
+		"presentation": {
+			"reveal": "always",
+			"panel": "shared",
+			"clear": false
+		}
+	},
+	{
+		"label": "PX4 NuttX: Clean",
+		"type": "process",
+		"command": "cmake",
+		"args": [
+			"--build", "${workspaceFolder}/build/${input:px4FirmwareTarget}",
+			"--target", "clean"
+		],
+		"problemMatcher": []
+	},
+	{
+		"label": "PX4 NuttX: Build & Flash (Windows USB)",
+		"type": "process",
+		"command": "/bin/bash",
+		"args": [
+			"${workspaceFolder}/flashFirmwarePx4.sh",
+			"${input:px4FirmwareTarget}"
+		],
+		"options": {
+			"cwd": "${workspaceFolder}",
+			"env": {
+				"CCACHE_DIR": "${workspaceFolder}/build/.ccache"
+			}
+		},
+		"group": "build",
+		"problemMatcher": "$gcc",
+		"presentation": {
+			"reveal": "always",
+			"focus": true,
+			"panel": "dedicated",
+			"clear": true,
+			"showReuseMessage": false
+		}
+	},
+	{
+		"label": "PX4 NuttX: List Firmware Targets",
+		"type": "process",
+		"command": "/bin/bash",
+		"args": [
+			"${workspaceFolder}/flashFirmwarePx4.sh",
+			"--list"
+		],
+		"options": {
+			"cwd": "${workspaceFolder}"
+		},
+		"problemMatcher": [],
+		"presentation": {
+			"reveal": "always",
+			"focus": false,
+			"panel": "dedicated",
+			"clear": true
+		}
+	},
+	{
+		"label": "PX4 SITL: Configure",
+		"type": "process",
+		"command": "cmake",
+		"args": [
+			"-S", "${workspaceFolder}",
+			"-B", "${workspaceFolder}/build/px4_sitl_default",
+			"-G", "Ninja",
+			"-DCONFIG=px4_sitl_default",
+			"-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+			"-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+		],
+		"problemMatcher": [],
+		"presentation": {
+			"reveal": "always",
+			"panel": "shared",
+			"clear": true
+		}
+	},
+	{
+		"label": "PX4 SITL: Build",
+		"type": "process",
+		"command": "cmake",
+		"args": [
+			"--build", "${workspaceFolder}/build/px4_sitl_default",
+			"--parallel"
+		],
+		"dependsOn": "PX4 SITL: Configure",
+		"dependsOrder": "sequence",
+		"problemMatcher": "$gcc",
+		"presentation": {
+			"reveal": "always",
+			"panel": "shared",
+			"clear": false
+		}
+	},
+	{
+		"label": "run-ctags",
+		"type": "process",
+		"command": "ctags",
+		"args": [
+			"-R",
+			"--languages=C,C++",
+			"--exclude=build",
+			"--exclude=.git",
+			"-f", "${workspaceFolder}/.vscode/tags",
+			"${workspaceFolder}"
+		],
+		"problemMatcher": []
+	},
         {
             "label": "build",
             "type": "shell",
@@ -16,7 +163,7 @@
             },
             "group": {
                 "kind": "build",
-                "isDefault": true,
+		"isDefault": false,
             },
             "problemMatcher": {
                 "base": "$gcc",
@@ -227,7 +374,23 @@
             "problemMatcher": [],
             "dependsOn":["px4_sitl_cleanup"]
         },
-
+        {
+            "label": "px4_sitl",
+            "type": "shell",
+            "command": "rm -rfv /tmp/px4* || true",
+            "presentation": {
+                "echo": true,
+                "reveal": "never",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false,
+                "close": true
+            },
+            "problemMatcher": [],
+            "dependsOn":["px4_kill"]
+        },
         {
             "label": "px4_sitl_cleanup",
             "type": "shell",
@@ -294,9 +457,21 @@
                 "clear": false
             },
             "problemMatcher": []
-        }
+        },
     ],
     "inputs": [
+        {
+            "type": "pickString",
+            "id": "px4FirmwareTarget",
+            "description": "Chọn PX4 firmware target để build/flash",
+            "options": [
+                "cubepilot_cubeorangeplus_default",
+                "cubepilot_cubeorangeplus_console",
+                "cubepilot_cubeorangeplus_test",
+                "cubepilot_cubeorangeplus_bootloader"
+            ],
+            "default": "cubepilot_cubeorangeplus_default"
+        },
         {
             "type": "pickString",
             "id": "gzWorld",
