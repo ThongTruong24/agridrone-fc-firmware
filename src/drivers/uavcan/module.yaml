@@ -24,6 +24,66 @@ parameters:
       min: 1
       max: 255
       reboot_required: true
+
+- group: THACO Actuator
+  definitions:
+    THACO_ACTUATOR:
+      description:
+        short: THACO actuator enable mask
+        long: |
+          Enable THACO actuator slots A1 through A8.
+          Bit 0 corresponds to A1 and bit 7 corresponds to A8.
+      type: bitmask
+      bit:
+        0: Actuator A1
+        1: Actuator A2
+        2: Actuator A3
+        3: Actuator A4
+        4: Actuator A5
+        5: Actuator A6
+        6: Actuator A7
+        7: Actuator A8
+      default: 0
+      min: 0
+      max: 255
+
+    THACO_ID_A${i}:
+      description:
+        short: THACO actuator ${i} ID
+        long: |
+          Logical actuator ID assigned to THACO actuator slot A${i}.
+      type: enum
+      values:
+        0: None
+        1: Gripper 1
+        2: Gripper 2
+        3: Gripper 3
+        4: Gripper 4
+        5: Pump 1
+        6: Pump 2
+        7: Pump 3
+        8: Pump 4
+        9: Servo 1
+        10: Servo 2
+        11: Servo 3
+        12: Servo 4
+      num_instances: 8
+      instance_start: 1
+      default: 0
+
+    THACO_RC_A${i}:
+      description:
+        short: THACO actuator ${i} RC channel
+        long: |
+          RC channel assigned to THACO actuator slot A${i}.
+          Set to 0 to disable RC control for this slot.
+      type: int32
+      min: 0
+      max: 18
+      num_instances: 8
+      instance_start: 1
+      default: 0
+
     UAVCAN_ESC_TYPE:
       description:
         short: ESC protocol type for UAVCAN output.
@@ -39,6 +99,7 @@ parameters:
         1: HobbyWing ESC
       default: 0
       reboot_required: true
+
 actuator_output:
   show_subgroups_if: 'UAVCAN_ENABLE>=3'
   config_parameters:

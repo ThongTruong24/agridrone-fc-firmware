@@ -96,6 +96,9 @@ UavcanNode::UavcanNode(uavcan::ICanDriver &can_driver, uavcan::ISystemClock &sys
 #if defined(CONFIG_UAVCAN_HARDPOINT_CONTROLLER)
 	_hardpoint_controller(_node),
 #endif
+
+	_thaco_actuator_bridge(_node),
+
 #if defined(CONFIG_UAVCAN_SAFETY_STATE_CONTROLLER)
 	_safety_state_controller(_node),
 #endif
@@ -418,6 +421,7 @@ UavcanNode::get_param(int remote_node_id, const char *name)
 void
 UavcanNode::update_params()
 {
+	_thaco_actuator_bridge.update_params();
 #if defined(CONFIG_UAVCAN_OUTPUTS_CONTROLLER)
 	_mixing_interface_esc.updateParams();
 #if defined(CONFIG_UAVCAN_HOBBYWING_ESC)
@@ -584,6 +588,13 @@ UavcanNode::init(uavcan::NodeID node_id, UAVCAN_DRIVER::BusEvent &bus_events)
 	}
 
 #endif
+
+	ret = _thaco_actuator_bridge.init();
+
+	if (ret < 0) {
+		PX4_ERR("THACO actuator bridge init: %d", ret);
+		return ret;
+	}
 
 #if defined(CONFIG_UAVCAN_SAFETY_STATE_CONTROLLER)
 	ret = _safety_state_controller.init();
@@ -773,6 +784,8 @@ UavcanNode::Run()
 	for (auto &br : _sensor_bridges) {
 		br->update();
 	}
+
+	_thaco_actuator_bridge.update();
 
 	if (_check_fw) {
 		_check_fw = false;
