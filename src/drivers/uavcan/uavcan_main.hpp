@@ -58,6 +58,7 @@
 #include "actuators/hardpoint.hpp"
 #endif
 
+#include "actuators/thaco_actuator.hpp"
 
 #include "allocator.hpp"
 
@@ -313,6 +314,9 @@ private:
 #if defined(CONFIG_UAVCAN_HARDPOINT_CONTROLLER)
 	UavcanHardpointController	_hardpoint_controller;
 #endif
+
+UavcanThacoActuatorBridge _thaco_actuator_bridge;
+
 #if defined(CONFIG_UAVCAN_SAFETY_STATE_CONTROLLER)
 	UavcanSafetyState         	_safety_state_controller;
 #endif

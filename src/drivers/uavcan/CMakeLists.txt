@@ -109,6 +109,7 @@ set(DSDLC_INPUTS
 	"${DSDLC_DIR}/com"
 	"${DSDLC_DIR}/cuav"
 	"${DSDLC_DIR}/dronecan"
+	"${DSDLC_DIR}/thaco"
 	"${DSDLC_DIR}/uavcan"
 )
 set(DSDLC_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/include/dsdlc_generated")
@@ -164,6 +165,7 @@ px4_add_module(
 		$<$<BOOL:${CONFIG_UAVCAN_HOBBYWING_ESC}>:actuators/esc_hobbywing.cpp>
 		actuators/hardpoint.cpp
 		actuators/servo.cpp
+		actuators/thaco_actuator.cpp
 
 		# Sensors
 		sensors/sensor_bridge.cpp
