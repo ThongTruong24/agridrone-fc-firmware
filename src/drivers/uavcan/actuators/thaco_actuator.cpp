@@ -97,58 +97,6 @@ int32_t UavcanThacoActuatorBridge::get_rc_channel(unsigned slot) const
 }
 
 
-uint8_t UavcanThacoActuatorBridge::rc_to_value(
-	uint8_t actuator_id,
-	float rc_value) const
-{
-	rc_value = math::constrain(rc_value, -1.0f, 1.0f);
-
-	/*
-	 * GRIPPER1..4
-	 *
-	 * 0 = close
-	 * 1 = open
-	 */
-	if (actuator_id >= GRIPPER_ID_MIN
-	    && actuator_id <= GRIPPER_ID_MAX) {
-
-		return rc_value > 0.0f ? 1 : 0;
-	}
-
-	/*
-	 * PUMP1..4
-	 *
-	 * 0 = off
-	 * 1 = on
-	 */
-	if (actuator_id >= PUMP_ID_MIN
-	    && actuator_id <= PUMP_ID_MAX) {
-
-		return rc_value > 0.0f ? 1 : 0;
-	}
-
-	/*
-	 * SERVO1..4
-	 *
-	 * RC -1 ... +1
-	 * ->
-	 * value 0 ... 255
-	 */
-	if (actuator_id >= SERVO_ID_MIN
-	    && actuator_id <= SERVO_ID_MAX) {
-
-		const float value =
-			(rc_value + 1.0f) * 127.5f;
-
-		return static_cast<uint8_t>(
-			       math::constrain(value, 0.0f, 255.0f) + 0.5f
-		       );
-	}
-
-	return 0;
-}
-
-
 void UavcanThacoActuatorBridge::broadcast_actuator_command(
 	uint8_t enabled_mask,
 	hrt_abstime now)
@@ -158,6 +106,7 @@ void UavcanThacoActuatorBridge::broadcast_actuator_command(
 	out.timestamp_ms =
 		static_cast<uint32_t>(now / 1000ULL);
 
+	bool publish_slot[8]{};
 	bool has_command = false;
 
 	for (unsigned slot = 0; slot < 8; slot++) {
@@ -166,6 +115,7 @@ void UavcanThacoActuatorBridge::broadcast_actuator_command(
 		 * THACO_ACTUATOR bit not enabled
 		 */
 		if ((enabled_mask & (1u << slot)) == 0) {
+			_gripper_states[slot] = GripperState{};
 			continue;
 		}
 
@@ -173,38 +123,53 @@ void UavcanThacoActuatorBridge::broadcast_actuator_command(
 			get_actuator_id(slot);
 
 		/*
-		 * Invalid / NONE actuator
+		 * Only GRIPPER1..4 are implemented.
 		 */
-		if (actuator_id == ACTUATOR_ID_NONE
-		    || actuator_id > SERVO_ID_MAX) {
-
+		if (actuator_id < GRIPPER_ID_MIN
+		    || actuator_id > GRIPPER_ID_MAX) {
+			_gripper_states[slot] = GripperState{};
 			continue;
 		}
 
 		const int32_t rc_channel =
 			get_rc_channel(slot);
 
-		/*
-		 * RC = 0 means no RC source assigned.
-		 *
-		 * For now do not send this actuator.
-		 * Later another command source can be added here.
-		 */
 		if (rc_channel <= 0 || rc_channel > 18) {
+			_gripper_states[slot] = GripperState{};
 			continue;
 		}
 
-		const unsigned rc_index =
-			static_cast<unsigned>(rc_channel - 1);
+		const unsigned rc_index = static_cast<unsigned>(rc_channel - 1);
 
-		if (rc_index >= _rc_channels.channel_count) {
+		if (rc_index >= _rc_channels.channel_count
+		    || !PX4_ISFINITE(_rc_channels.channels[rc_index])) {
 			continue;
 		}
 
-		const float rc_value =
-			_rc_channels.channels[rc_index];
+		/* Scale the normalized RC input [-1, 1] directly to [0, 255]. */
+		const float rc_value = math::constrain(_rc_channels.channels[rc_index], -1.0f, 1.0f);
+		const uint8_t value = static_cast<uint8_t>((rc_value + 1.0f) * 127.5f + 0.5f);
+		GripperState &state = _gripper_states[slot];
 
-		if (!PX4_ISFINITE(rc_value)) {
+		if (!state.initialized || state.actuator_id != actuator_id) {
+			state = GripperState{};
+			state.initialized = true;
+			state.actuator_id = actuator_id;
+			state.value = value;
+			state.command_id = _command_id;
+			state.publish_pending = true;
+
+		} else if (state.value != value) {
+			state.value = value;
+			state.command_id = ++_command_id;
+			state.publish_pending = true;
+		}
+
+		const bool should_publish = state.publish_pending
+					    || state.last_publish_time == 0
+					    || (now - state.last_publish_time) >= REFRESH_INTERVAL_US;
+
+		if (!should_publish) {
 			continue;
 		}
 
@@ -212,18 +177,37 @@ void UavcanThacoActuatorBridge::broadcast_actuator_command(
 
 		cmd.actuator_id = actuator_id;
 
-		cmd.value =
-			rc_to_value(actuator_id, rc_value);
-
-		cmd.command_id = ++_command_id;
+		cmd.value = state.value;
+		cmd.command_id = state.command_id;
 
 		out.commands.push_back(cmd);
 
 		has_command = true;
+		publish_slot[slot] = true;
 	}
 
-	if (has_command) {
-		(void)_uavcan_pub_actuator_cmd.broadcast(out);
+	if (!has_command) {
+		return;
+	}
+
+	/*
+	 * Limit both state-change transmissions and refresh transmissions
+	 * to one ArrayCommand transfer every 20 ms (50 Hz maximum).
+	 */
+	if (_last_publish_time != 0
+	    && (now - _last_publish_time) < (1000000 / MAX_RATE_HZ)) {
+		return;
+	}
+
+	_last_publish_time = now;
+
+	if (_uavcan_pub_actuator_cmd.broadcast(out) >= 0) {
+		for (unsigned slot = 0; slot < 8; slot++) {
+			if (publish_slot[slot]) {
+				_gripper_states[slot].publish_pending = false;
+				_gripper_states[slot].last_publish_time = now;
+			}
+		}
 	}
 }
 
@@ -234,7 +218,6 @@ void UavcanThacoActuatorBridge::update()
 
 	if (_rc_channels_sub.update(&rc)) {
 		_rc_channels = rc;
-		_has_rc = true;
 	}
 
 	int32_t mask =
@@ -245,6 +228,11 @@ void UavcanThacoActuatorBridge::update()
 	 */
 	if (mask <= 0) {
 		_last_publish_time = 0;
+
+		for (GripperState &state : _gripper_states) {
+			state = GripperState{};
+		}
+
 		return;
 	}
 
@@ -252,43 +240,8 @@ void UavcanThacoActuatorBridge::update()
 		mask = 255;
 	}
 
-	/*
-	 * Currently RC is the only command source.
-	 */
-	if (!_has_rc) {
-		return;
-	}
-
-	/*
-	 * Never command actuators from lost RC signal.
-	 */
-	if (_rc_channels.signal_lost) {
-		return;
-	}
-
 	const hrt_abstime now =
 		hrt_absolute_time();
-
-	/*
-	 * Reject stale RC data.
-	 */
-	if (_rc_channels.timestamp_last_valid == 0
-	    || (now - _rc_channels.timestamp_last_valid) > 500000) {
-
-		return;
-	}
-
-	/*
-	 * Max 50 Hz broadcast rate.
-	 */
-	if (_last_publish_time != 0
-	    && (now - _last_publish_time)
-	    < (1000000 / MAX_RATE_HZ)) {
-
-		return;
-	}
-
-	_last_publish_time = now;
 
 	broadcast_actuator_command(
 		static_cast<uint8_t>(mask),
