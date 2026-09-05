@@ -17,6 +17,7 @@ class UavcanThacoActuatorBridge : public ModuleParams
 {
 public:
 	static constexpr unsigned MAX_RATE_HZ = 50;
+	static constexpr hrt_abstime REFRESH_INTERVAL_US = 100000;
 	static constexpr unsigned UAVCAN_COMMAND_TRANSFER_PRIORITY = 6;
 
 	UavcanThacoActuatorBridge(uavcan::INode &node);
@@ -34,17 +35,18 @@ private:
 	static constexpr uint8_t GRIPPER_ID_MIN = 1;
 	static constexpr uint8_t GRIPPER_ID_MAX = 4;
 
-	static constexpr uint8_t PUMP_ID_MIN = 5;
-	static constexpr uint8_t PUMP_ID_MAX = 8;
-
-	static constexpr uint8_t SERVO_ID_MIN = 9;
-	static constexpr uint8_t SERVO_ID_MAX = 12;
+	struct GripperState {
+		bool initialized{false};
+		uint8_t actuator_id{ACTUATOR_ID_NONE};
+		uint8_t value{0};
+		uint16_t command_id{0};
+		bool publish_pending{false};
+		hrt_abstime last_publish_time{0};
+	};
 
 	uint8_t get_actuator_id(unsigned slot) const;
 
 	int32_t get_rc_channel(unsigned slot) const;
-
-	uint8_t rc_to_value(uint8_t actuator_id, float rc_value) const;
 
 	void broadcast_actuator_command(uint8_t enabled_mask, hrt_abstime now);
 
@@ -56,8 +58,7 @@ private:
 	uORB::Subscription _rc_channels_sub{ORB_ID(rc_channels)};
 
 	rc_channels_s _rc_channels{};
-
-	bool _has_rc{false};
+	GripperState _gripper_states[8]{};
 
 	uint16_t _command_id{0};
 
