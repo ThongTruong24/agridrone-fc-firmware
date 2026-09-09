@@ -306,6 +306,7 @@ private:
 
 	UavcanServoController		_servo_controller;
 	UavcanMixingInterfaceServo 	_mixing_interface_servo{_node_mutex, _servo_controller};
+
 #if defined(CONFIG_UAVCAN_HOBBYWING_ESC)
 	UavcanHobbyWingEscController		_esc_hobbywing_controller;
 	UavcanMixingInterfaceHobbyWingESC	_mixing_interface_hobbywing_esc{_node_mutex, _esc_hobbywing_controller};
@@ -315,7 +316,7 @@ private:
 	UavcanHardpointController	_hardpoint_controller;
 #endif
 
-UavcanThacoActuatorBridge _thaco_actuator_bridge;
+	UavcanThacoActuatorController _thaco_actuator_controller;
 
 #if defined(CONFIG_UAVCAN_SAFETY_STATE_CONTROLLER)
 	UavcanSafetyState         	_safety_state_controller;

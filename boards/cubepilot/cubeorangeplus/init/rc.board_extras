@@ -1,0 +1,6 @@
+#!/bin/sh
+#
+# Cube Orange Plus board-specific extras
+#------------------------------------------------------------------------------
+
+thaco_actuator start

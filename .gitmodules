@@ -86,6 +86,7 @@
 [submodule "src/drivers/uavcan/libdronecan/dsdl"]
 	path = src/drivers/uavcan/libdronecan/dsdl
 	url = https://github.com/ThongTruong24/DSDL.git
+	branch = dev/thaco-actuator-dsdl
 [submodule "src/drivers/uavcan/libdronecan/libuavcan/dsdl_compiler/pydronecan"]
 	path = src/drivers/uavcan/libdronecan/libuavcan/dsdl_compiler/pydronecan
 	url = https://github.com/dronecan/pydronecan
