@@ -47,6 +47,16 @@ parameters:
       min: 0
       max: 255
 
+    THACO_RFRSH_ID:
+      description:
+        short: Renew command ID on THACO refresh
+        long: |
+          Increment command_id on each 10 Hz state refresh. Enable this only
+          for actuator firmware that ignores refresh frames with an unchanged
+          command_id. Disabled preserves one command_id per value change.
+      type: boolean
+      default: false
+
     THACO_ID_A${i}:
       description:
         short: THACO actuator ${i} ID
@@ -67,19 +77,6 @@ parameters:
         10: Servo 2
         11: Servo 3
         12: Servo 4
-      num_instances: 8
-      instance_start: 1
-      default: 0
-
-    THACO_RC_A${i}:
-      description:
-        short: THACO actuator ${i} RC channel
-        long: |
-          RC channel assigned to THACO actuator slot A${i}.
-          Set to 0 to disable RC control for this slot.
-      type: int32
-      min: 0
-      max: 18
       num_instances: 8
       instance_start: 1
       default: 0

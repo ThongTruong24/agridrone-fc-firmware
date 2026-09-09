@@ -1,0 +1,76 @@
+module_name: THACO Actuator
+parameters:
+  - group: THACO Actuator
+    definitions:
+      THACO_ARM_MODE:
+        description:
+          short: THACO actuator arming policy
+          long: |
+            Select whether THACO actuators require the vehicle to be armed,
+            or may also accept valid RC commands while disarmed.
+        type: enum
+        values:
+          0: Armed only
+          1: RC allowed while disarmed
+        default: 0
+
+      THACO_DEBUG:
+        description:
+          short: Enable THACO RC and output debug logging
+          long: |
+            Print the raw RC PWM, normalized RC value, scaled THACO value,
+            and transmitted DroneCAN command at a maximum rate of 10 Hz.
+        type: boolean
+        default: false
+
+      THACO_RC_A${i}:
+        description:
+          short: THACO actuator ${i} RC channel
+          long: |
+            RC channel mapped to THACO actuator slot A${i}.
+            Set to 0 to disable the RC input source for this slot.
+        type: int32
+        min: 0
+        max: 18
+        num_instances: 8
+        instance_start: 1
+        default: 0
+
+      THACO_A${i}_MIN:
+        description:
+          short: THACO actuator ${i} minimum command
+          long: |
+            Lower limit for accepted commands.
+        type: int32
+        min: 0
+        max: 255
+        num_instances: 8
+        instance_start: 1
+        default: 0
+
+      THACO_A${i}_MAX:
+        description:
+          short: THACO actuator ${i} maximum command
+          long: |
+            Upper limit for accepted commands.
+        type: int32
+        min: 0
+        max: 255
+        num_instances: 8
+        instance_start: 1
+        default: 255
+
+      THACO_A${i}_DEF:
+        description:
+          short: THACO actuator ${i} safe/default command
+          long: |
+            Used at startup, on command timeout (500 ms), RC loss while RC owns
+            the slot, failsafe, or when control is inhibited. Clamped to MIN/MAX.
+            Invalid limits reject commands and use DEF clamped to the last valid
+            limits (0..255 until a valid configuration has been loaded).
+        type: int32
+        min: 0
+        max: 255
+        num_instances: 8
+        instance_start: 1
+        default: 0

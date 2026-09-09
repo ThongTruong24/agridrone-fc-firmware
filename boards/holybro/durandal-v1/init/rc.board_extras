@@ -1,0 +1,6 @@
+#!/bin/sh
+#
+# Holybro Durandal board-specific extras
+#------------------------------------------------------------------------------
+
+thaco_actuator start

@@ -1,0 +1,5 @@
+menuconfig MODULES_THACO_ACTUATOR
+	bool "thaco_actuator"
+	default n
+	---help---
+		Enable the THACO actuator command and state management module.
