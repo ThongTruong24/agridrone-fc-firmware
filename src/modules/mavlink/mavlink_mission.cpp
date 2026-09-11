@@ -1628,6 +1628,7 @@ MavlinkMissionManager::parse_mavlink_mission_item(const mavlink_mission_item_t *
 		case MAV_CMD_CONDITION_DISTANCE:
 		case MAV_CMD_DO_SET_ACTUATOR:
 		case MAV_CMD_COMPONENT_ARM_DISARM:
+		case MAV_CMD_THACO_EXTERNAL_XYZ:
 			mission_item->nav_cmd = (NAV_CMD)mavlink_mission_item->command;
 			break;
 
@@ -1648,6 +1649,10 @@ MavlinkMissionManager::parse_mavlink_mission_item(const mavlink_mission_item_t *
 	}
 
 	mission_item->autocontinue = mavlink_mission_item->autocontinue;
+	// Force autocontinue=false for THACO_EXTERNAL_XYZ marker to hold at previous waypoint
+	if (mission_item->nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ) {
+		mission_item->autocontinue = false;
+	}
 	// mission_item->index = mavlink_mission_item->seq;
 
 	mission_item->origin = ORIGIN_MAVLINK;
@@ -1720,11 +1725,12 @@ MavlinkMissionManager::format_mavlink_mission_item(const struct mission_item_s *
 		case NAV_CMD_SET_CAMERA_ZOOM:
 		case NAV_CMD_SET_CAMERA_FOCUS:
 		case NAV_CMD_DO_VTOL_TRANSITION:
+		case NAV_CMD_THACO_EXTERNAL_XYZ:
 			break;
 
-		default:
-			return PX4_ERROR;
-		}
+	default:
+		return PX4_ERROR;
+	}
 
 	} else {
 		mavlink_mission_item->param1 = 0.0f;

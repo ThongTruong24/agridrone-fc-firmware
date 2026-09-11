@@ -72,6 +72,7 @@ MissionBlock::is_mission_item_reached_or_completed()
 	// Action Commands that doesn't have timeout completes instantaneously
 	case NAV_CMD_DO_SET_ACTUATOR:
 	case NAV_CMD_DO_LAND_START:
+	case NAV_CMD_THACO_EXTERNAL_XYZ:
 	case NAV_CMD_DO_TRIGGER_CONTROL:
 	case NAV_CMD_DO_DIGICAM_CONTROL:
 	case NAV_CMD_IMAGE_START_CAPTURE:
@@ -610,7 +611,8 @@ MissionBlock::item_contains_gate(const mission_item_s &item)
 bool
 MissionBlock::item_contains_marker(const mission_item_s &item)
 {
-	return item.nav_cmd == NAV_CMD_DO_LAND_START;
+	return item.nav_cmd == NAV_CMD_DO_LAND_START
+		|| item.nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ;
 }
 
 bool
