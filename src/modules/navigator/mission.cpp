@@ -246,6 +246,19 @@ void Mission::setActiveMissionItems()
 			pos_sp_triplet->next.valid = false;
 		}
 
+		/* Prevent position lookahead past the THACO external-control marker
+		 * so the vehicle stops at the current waypoint before handover. */
+		if (item_contains_position(_mission_item) && pos_sp_triplet->next.valid
+		    && (_mission.current_seq + 1 < _mission.count)) {
+			mission_item_s immediate_next_item{};
+			if (_dataman_cache.loadWait(mission_dataman_id, _mission.current_seq + 1,
+						    reinterpret_cast<uint8_t *>(&immediate_next_item), sizeof(immediate_next_item), MAX_DATAMAN_LOAD_WAIT)) {
+				if (immediate_next_item.nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ) {
+					pos_sp_triplet->next.valid = false;
+				}
+			}
+		}
+
 	} else if (item_contains_gate(_mission_item)) {
 		// The mission item is a gate, let's check if the next item in the list provides
 		// a position to go towards.
@@ -264,7 +277,12 @@ void Mission::setActiveMissionItems()
 		}
 
 	} else {
-		handleVtolTransition(new_work_item_type, next_mission_items, num_found_items);
+		if (_mission_item.nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ) {
+			// Hold the previous position setpoint while waiting for external control.
+			pos_sp_triplet->next.valid = false;
+		} else {
+			handleVtolTransition(new_work_item_type, next_mission_items, num_found_items);
+		}
 	}
 
 	// Only set the previous position item if the current one really changed

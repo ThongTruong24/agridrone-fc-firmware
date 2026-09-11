@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>../../../mavlink/mavlink/message_definitions/v1.0/development.xml</include>
+  <enums>
+    <enum name="MAV_CMD">
+      <entry value="44000" name="MAV_CMD_THACO_EXTERNAL_XYZ" hasLocation="false" isDestination="false">
+        <description>THACO External XYZ marker - triggers companion to start external XYZ control</description>
+        <param index="1">Reserved</param>
+        <param index="2">Reserved</param>
+        <param index="3">Reserved</param>
+        <param index="4">Reserved</param>
+        <param index="5">Reserved</param>
+        <param index="6">Reserved</param>
+        <param index="7">Reserved</param>
+      </entry>
+    </enum>
+  </enums>
+  <messages/>
+</mavlink>
