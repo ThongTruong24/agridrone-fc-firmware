@@ -46,9 +46,12 @@
 
 #include "navigator.h"
 
+#include <cmath>
 #include <float.h>
+#include <inttypes.h>
 #include <sys/stat.h>
 
+#include <commander/px4_custom_mode.h>
 #include <dataman_client/DatamanClient.hpp>
 #include <drivers/drv_hrt.h>
 #include <lib/geo/geo.h>
@@ -123,6 +126,376 @@ Navigator::~Navigator()
 	orb_unsubscribe(_local_pos_sub);
 	orb_unsubscribe(_mission_sub);
 	orb_unsubscribe(_vehicle_status_sub);
+}
+
+const char *Navigator::thaco_handoff_state_name() const
+{
+	switch (_thaco_handoff_state) {
+	case ThacoHandoffState::IDLE:
+		return "IDLE";
+
+	case ThacoHandoffState::WAITING_FOR_COMPANION:
+		return "WAITING_FOR_COMPANION";
+
+	case ThacoHandoffState::RESUME_REQUESTED:
+		return "RESUME_REQUESTED";
+	}
+
+	return "UNKNOWN";
+}
+
+const char *Navigator::thaco_ack_result_name() const
+{
+	switch (_thaco_last_final_result) {
+	case vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED:
+		return "ACCEPTED";
+
+	case vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED:
+		return "TEMPORARILY_REJECTED";
+
+	case vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED:
+		return "DENIED";
+
+	case vehicle_command_ack_s::VEHICLE_CMD_RESULT_FAILED:
+		return "FAILED";
+
+	case vehicle_command_ack_s::VEHICLE_CMD_RESULT_CANCELLED:
+		return "CANCELLED";
+	}
+
+	return "NONE";
+}
+
+void Navigator::publish_thaco_trigger()
+{
+	if ((_thaco_handoff_state != ThacoHandoffState::WAITING_FOR_COMPANION)
+	    || (_thaco_pending_trigger_id == 0)) {
+		return;
+	}
+
+	const hrt_abstime now = hrt_absolute_time();
+	thaco_external_xyz_trigger_s trigger{};
+	trigger.timestamp = now;
+	trigger.trigger_id = _thaco_pending_trigger_id;
+	trigger.time_boot_ms = static_cast<uint32_t>(_thaco_trigger_timestamp / 1000);
+	_thaco_external_xyz_trigger_pub.publish(trigger);
+	_thaco_last_trigger_publication = now;
+	_thaco_trigger_publication_count++;
+}
+
+void Navigator::publish_thaco_command_ack(uint8_t result)
+{
+	if (!_thaco_ack_requester_valid) {
+		return;
+	}
+
+	vehicle_command_ack_s command_ack{};
+	command_ack.timestamp = hrt_absolute_time();
+	command_ack.command = MAV_CMD_THACO_EXTERNAL_XYZ_COMPLETE;
+	command_ack.result = result;
+	command_ack.result_param1 = result == vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS ? UINT8_MAX : 0;
+	command_ack.target_system = _thaco_ack_target_system;
+	command_ack.target_component = _thaco_ack_target_component;
+	command_ack.from_external = false;
+	_vehicle_cmd_ack_pub.publish(command_ack);
+
+	if (result != vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS) {
+		_thaco_last_final_result = result;
+	}
+}
+
+void Navigator::cache_thaco_completed_transaction(uint8_t result)
+{
+	_thaco_completed_trigger_id = _thaco_pending_trigger_id;
+	_thaco_completed_source_system = _thaco_ack_target_system;
+	_thaco_completed_source_component = _thaco_ack_target_component;
+	_thaco_completed_result = result;
+	_thaco_completed_timestamp = hrt_absolute_time();
+	_thaco_completed_valid = true;
+}
+
+void Navigator::clear_thaco_completed_transaction()
+{
+	_thaco_completed_trigger_id = 0;
+	_thaco_completed_source_system = 0;
+	_thaco_completed_source_component = 0;
+	_thaco_completed_result = UINT8_MAX;
+	_thaco_completed_timestamp = 0;
+	_thaco_completed_valid = false;
+}
+
+void Navigator::expire_thaco_completed_transaction()
+{
+	if (_thaco_completed_valid
+	    && (hrt_elapsed_time(&_thaco_completed_timestamp) >= THACO_COMPLETED_REPLAY_WINDOW)) {
+		clear_thaco_completed_transaction();
+	}
+}
+
+void Navigator::start_thaco_handoff(uint32_t mission_id, int32_t marker_seq)
+{
+	if (_thaco_handoff_state != ThacoHandoffState::IDLE) {
+		// Repeated evaluation of the same instantaneous marker is expected while it has autocontinue=false.
+		// The explicit handoff state prevents that evaluation from allocating another trigger ID.
+		return;
+	}
+
+	_thaco_next_trigger_id = (_thaco_next_trigger_id >= THACO_MAX_EXACT_TRIGGER_ID) ? 1 : _thaco_next_trigger_id + 1;
+	_thaco_pending_trigger_id = _thaco_next_trigger_id;
+
+	// A wrapped ID belongs to the new active transaction, never to an older completed transaction.
+	if (_thaco_completed_valid && (_thaco_completed_trigger_id == _thaco_pending_trigger_id)) {
+		clear_thaco_completed_transaction();
+	}
+
+	_thaco_mission_id = mission_id;
+	_thaco_marker_seq = marker_seq;
+	_thaco_anchor_seq = -1;
+
+	if (!_mission.resolve_thaco_anchor(mission_id, marker_seq, _thaco_anchor_seq)) {
+		PX4_WARN("THACO anchor unavailable: marker=%" PRId32, marker_seq);
+	}
+
+	_thaco_resume_seq = -1;
+	_thaco_last_resume_seq = -1;
+	_thaco_trigger_timestamp = hrt_absolute_time();
+	_thaco_last_trigger_publication = 0;
+	_thaco_resume_request_start = 0;
+	_thaco_last_resume_request = 0;
+	_thaco_trigger_publication_count = 0;
+	_thaco_resume_request_retry_count = 0;
+	_thaco_ack_target_system = 0;
+	_thaco_ack_target_component = 0;
+	_thaco_last_final_result = UINT8_MAX;
+	_thaco_ack_requester_valid = false;
+	_thaco_complete_received = false;
+	_thaco_last_resume_succeeded = false;
+	_thaco_handoff_state = ThacoHandoffState::WAITING_FOR_COMPANION;
+
+	publish_thaco_trigger();
+	PX4_INFO("THACO handoff waiting: trigger=%" PRIu32, _thaco_pending_trigger_id);
+}
+
+void Navigator::request_thaco_mission_resume()
+{
+	vehicle_command_s mode_command{};
+	mode_command.command = vehicle_command_s::VEHICLE_CMD_DO_SET_MODE;
+	mode_command.param1 = 1.f; // MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+	mode_command.param2 = static_cast<float>(PX4_CUSTOM_MAIN_MODE_AUTO);
+	mode_command.param3 = static_cast<float>(PX4_CUSTOM_SUB_MODE_AUTO_MISSION);
+	publish_vehicle_command(mode_command);
+	_thaco_last_resume_request = hrt_absolute_time();
+	_thaco_resume_request_retry_count++;
+}
+
+void Navigator::handle_thaco_complete(const vehicle_command_s &cmd)
+{
+	expire_thaco_completed_transaction();
+
+	uint8_t result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+	bool trigger_id_is_exact_integer{false};
+
+	// COMMAND_LONG parameters are float. Keep IDs in [1, 2^24], where every integer is exactly representable.
+	if (PX4_ISFINITE(cmd.param1) && (cmd.param1 >= 1.f)
+	    && (cmd.param1 <= static_cast<float>(THACO_MAX_EXACT_TRIGGER_ID))) {
+		float integer_part{0.f};
+		trigger_id_is_exact_integer = fabsf(modff(cmd.param1, &integer_part)) < FLT_MIN;
+	}
+
+	if (trigger_id_is_exact_integer) {
+		const uint32_t trigger_id = static_cast<uint32_t>(cmd.param1);
+
+		if ((_thaco_handoff_state == ThacoHandoffState::WAITING_FOR_COMPANION)
+		    && (_thaco_pending_trigger_id != 0)
+		    && (trigger_id == _thaco_pending_trigger_id)) {
+			if (_mission.validate_thaco_resume_context(_thaco_mission_id, _thaco_marker_seq)) {
+				_thaco_ack_target_system = cmd.source_system;
+				_thaco_ack_target_component = cmd.source_component;
+				_thaco_ack_requester_valid = true;
+				_thaco_complete_received = true;
+				_thaco_resume_request_start = hrt_absolute_time();
+				_thaco_last_resume_request = 0;
+				_thaco_resume_request_retry_count = 0;
+				_thaco_handoff_state = ThacoHandoffState::RESUME_REQUESTED;
+				publish_thaco_command_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS);
+				request_thaco_mission_resume();
+				PX4_INFO("THACO complete in progress: trigger=%" PRIu32, trigger_id);
+				return;
+
+			} else {
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+				PX4_WARN("THACO resume context invalid: trigger=%" PRIu32, trigger_id);
+			}
+
+		} else if ((_thaco_handoff_state == ThacoHandoffState::RESUME_REQUESTED)
+			   && (_thaco_pending_trigger_id != 0)
+			   && (trigger_id == _thaco_pending_trigger_id)) {
+			if ((cmd.source_system == _thaco_ack_target_system)
+			    && (cmd.source_component == _thaco_ack_target_component)) {
+				// Repeat IN_PROGRESS for the original requester without creating another transaction.
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS;
+
+			} else {
+				// A different sender cannot take ownership of the active asynchronous command.
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+			}
+
+		} else if (_thaco_completed_valid && (trigger_id == _thaco_completed_trigger_id)) {
+			if ((cmd.source_system == _thaco_completed_source_system)
+			    && (cmd.source_component == _thaco_completed_source_component)) {
+				// Pure ACK replay: the completed transaction cannot cause mode or mission actions again.
+				result = _thaco_completed_result;
+
+			} else {
+				// Never disclose or transfer a completed transaction to an unrelated requester.
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+			}
+		}
+	}
+
+	publish_vehicle_command_ack(cmd, result,
+				    result == vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS ? UINT8_MAX : 0);
+
+	if (result != vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS) {
+		_thaco_last_final_result = result;
+	}
+}
+
+void Navigator::clear_thaco_handoff(bool resume_succeeded)
+{
+	_thaco_handoff_state = ThacoHandoffState::IDLE;
+	_thaco_pending_trigger_id = 0;
+	_thaco_mission_id = 0;
+	_thaco_marker_seq = -1;
+	_thaco_anchor_seq = -1;
+	_thaco_resume_seq = -1;
+	_thaco_trigger_timestamp = 0;
+	_thaco_last_trigger_publication = 0;
+	_thaco_resume_request_start = 0;
+	_thaco_last_resume_request = 0;
+	_thaco_trigger_publication_count = 0;
+	_thaco_resume_request_retry_count = 0;
+	_thaco_ack_target_system = 0;
+	_thaco_ack_target_component = 0;
+	_thaco_ack_requester_valid = false;
+
+	if (!resume_succeeded) {
+		_thaco_complete_received = false;
+	}
+
+	_thaco_last_resume_succeeded = resume_succeeded;
+}
+
+void Navigator::return_thaco_to_waiting(uint8_t final_result)
+{
+	publish_thaco_command_ack(final_result);
+	_thaco_handoff_state = ThacoHandoffState::WAITING_FOR_COMPANION;
+	_thaco_resume_seq = -1;
+	_thaco_resume_request_start = 0;
+	_thaco_last_resume_request = 0;
+	_thaco_resume_request_retry_count = 0;
+	_thaco_ack_target_system = 0;
+	_thaco_ack_target_component = 0;
+	_thaco_ack_requester_valid = false;
+	_thaco_last_resume_succeeded = false;
+	_thaco_last_trigger_publication = 0;
+	publish_thaco_trigger();
+}
+
+void Navigator::cancel_thaco_handoff(const char *reason, bool rewind_to_anchor)
+{
+	if (_thaco_handoff_state != ThacoHandoffState::IDLE) {
+		if (_thaco_handoff_state == ThacoHandoffState::RESUME_REQUESTED) {
+			publish_thaco_command_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_CANCELLED);
+		}
+
+		if (rewind_to_anchor
+		    && !_mission.rewind_thaco_to_anchor(_thaco_mission_id, _thaco_marker_seq, _thaco_anchor_seq)) {
+			PX4_WARN("THACO anchor rewind failed: marker=%" PRId32 ", anchor=%" PRId32,
+				 _thaco_marker_seq, _thaco_anchor_seq);
+		}
+
+		PX4_WARN("THACO handoff cancelled: %s", reason);
+		clear_thaco_handoff(false);
+	}
+}
+
+void Navigator::update_thaco_handoff()
+{
+	expire_thaco_completed_transaction();
+
+	if (_thaco_handoff_state == ThacoHandoffState::IDLE) {
+		return;
+	}
+
+	if (_vstatus.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		cancel_thaco_handoff("vehicle disarmed", true);
+		return;
+	}
+
+	if (_vstatus.failsafe) {
+		cancel_thaco_handoff("failsafe active", true);
+		return;
+	}
+
+	if ((_vstatus.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION)
+	    && (_vstatus.nav_state != vehicle_status_s::NAVIGATION_STATE_OFFBOARD)) {
+		cancel_thaco_handoff("operator left mission/offboard", true);
+		return;
+	}
+
+	if ((_vstatus.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION)
+	    && (_vstatus.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD)) {
+		cancel_thaco_handoff("operator selected another mode", true);
+		return;
+	}
+
+	if (_mission.get_mission_id() != _thaco_mission_id) {
+		cancel_thaco_handoff("mission replaced or reset", false);
+		return;
+	}
+
+	if (_mission.get_current_mission_index() != _thaco_marker_seq) {
+		cancel_thaco_handoff("mission sequence changed", false);
+		return;
+	}
+
+	if ((_thaco_handoff_state == ThacoHandoffState::WAITING_FOR_COMPANION)
+	    && (hrt_elapsed_time(&_thaco_last_trigger_publication) >= THACO_TRIGGER_RETRY_INTERVAL)) {
+		publish_thaco_trigger();
+	}
+
+	if (_thaco_handoff_state == ThacoHandoffState::RESUME_REQUESTED) {
+		if ((_vstatus.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION) && _mission.isActive()) {
+			int32_t resume_seq{-1};
+
+			if (_mission.commit_thaco_resume(_thaco_mission_id, _thaco_marker_seq, resume_seq)) {
+				const uint32_t completed_trigger_id = _thaco_pending_trigger_id;
+				_thaco_resume_seq = resume_seq;
+				_thaco_last_resume_seq = resume_seq;
+				cache_thaco_completed_transaction(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
+				publish_thaco_command_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
+				clear_thaco_handoff(true);
+				PX4_INFO("THACO mission resume succeeded: trigger=%" PRIu32, completed_trigger_id);
+
+			} else {
+				PX4_WARN("THACO mission commit failed: trigger=%" PRIu32, _thaco_pending_trigger_id);
+				return_thaco_to_waiting(vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
+			}
+
+			return;
+		}
+
+		if (hrt_elapsed_time(&_thaco_resume_request_start) >= THACO_RESUME_TIMEOUT) {
+			PX4_WARN("THACO mission resume timed out: trigger=%" PRIu32, _thaco_pending_trigger_id);
+			return_thaco_to_waiting(vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
+			return;
+		}
+
+		if (hrt_elapsed_time(&_thaco_last_resume_request) >= THACO_RESUME_RETRY_INTERVAL) {
+			request_thaco_mission_resume();
+		}
+	}
 }
 
 void Navigator::params_update()
@@ -754,6 +1127,9 @@ void Navigator::run()
 				// reset cruise speed and throttle to default when transitioning (VTOL Takeoff handles it separately)
 				reset_cruising_speed();
 				set_cruising_throttle();
+
+			} else if (cmd.command == MAV_CMD_THACO_EXTERNAL_XYZ_COMPLETE) {
+				handle_thaco_complete(cmd);
 			}
 		}
 
@@ -890,6 +1266,8 @@ void Navigator::run()
 				_navigation_mode_array[i]->run(_navigation_mode == _navigation_mode_array[i]);
 			}
 		}
+
+		update_thaco_handoff();
 
 		/* if nothing is running, set position setpoint triplet invalid once */
 		if (_navigation_mode == nullptr && !_pos_sp_triplet_published_invalid_once) {
@@ -1109,6 +1487,25 @@ Navigator *Navigator::instantiate(int argc, char *argv[])
 int Navigator::print_status()
 {
 	PX4_INFO("Running");
+	PX4_INFO("THACO handoff: state=%s, pending=%" PRIu32 ", marker_seq=%" PRId32 ", anchor_seq=%" PRId32
+		 ", resume_seq=%" PRId32,
+		 thaco_handoff_state_name(), _thaco_pending_trigger_id, _thaco_marker_seq, _thaco_anchor_seq,
+		 _thaco_handoff_state == ThacoHandoffState::RESUME_REQUESTED ? _thaco_resume_seq : _thaco_last_resume_seq);
+	PX4_INFO("THACO trigger retry=%s, publications=%" PRIu32 ", resume_requests=%" PRIu32,
+		 _thaco_handoff_state == ThacoHandoffState::WAITING_FOR_COMPANION ? "active" : "inactive",
+		 _thaco_trigger_publication_count, _thaco_resume_request_retry_count);
+	PX4_INFO("THACO complete=%s, in_progress=%s, last_final=%s, last_resume_succeeded=%s",
+		 _thaco_complete_received ? "yes" : "no",
+		 _thaco_handoff_state == ThacoHandoffState::RESUME_REQUESTED ? "yes" : "no",
+		 thaco_ack_result_name(),
+		 _thaco_last_resume_succeeded ? "yes" : "no");
+	PX4_INFO("THACO replay: valid=%s, trigger=%" PRIu32 ", requester=%u/%u, result=%u, age_ms=%" PRIu64,
+		 _thaco_completed_valid ? "yes" : "no",
+		 _thaco_completed_trigger_id,
+		 static_cast<unsigned>(_thaco_completed_source_system),
+		 static_cast<unsigned>(_thaco_completed_source_component),
+		 static_cast<unsigned>(_thaco_completed_result),
+		 _thaco_completed_valid ? hrt_elapsed_time(&_thaco_completed_timestamp) / 1000 : 0);
 
 	_geofence.printStatus();
 	return 0;
@@ -1517,7 +1914,7 @@ void Navigator::publish_distance_sensor_mode_request()
 	}
 }
 
-void Navigator::publish_vehicle_command_ack(const vehicle_command_s &cmd, uint8_t result)
+void Navigator::publish_vehicle_command_ack(const vehicle_command_s &cmd, uint8_t result, uint8_t progress)
 {
 	vehicle_command_ack_s command_ack = {};
 
@@ -1528,7 +1925,7 @@ void Navigator::publish_vehicle_command_ack(const vehicle_command_s &cmd, uint8_
 	command_ack.from_external = false;
 
 	command_ack.result = result;
-	command_ack.result_param1 = 0;
+	command_ack.result_param1 = progress;
 	command_ack.result_param2 = 0;
 
 	_vehicle_cmd_ack_pub.publish(command_ack);

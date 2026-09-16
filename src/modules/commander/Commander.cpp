@@ -1538,6 +1538,8 @@ Commander::handle_command(const vehicle_command_s &cmd)
 	case vehicle_command_s::VEHICLE_CMD_EXTERNAL_POSITION_ESTIMATE:
 	case vehicle_command_s::VEHICLE_CMD_REQUEST_CAMERA_INFORMATION:
 	case vehicle_command_s::VEHICLE_CMD_EXTERNAL_ATTITUDE_ESTIMATE:
+	case 44001: // MAV_CMD_THACO_ACTUATOR_CONTROL (handled by ThacoActuator)
+	case 44002: // MAV_CMD_THACO_EXTERNAL_XYZ_COMPLETE (handled by Navigator)
 		/* ignore commands that are handled by other parts of the system */
 		break;
 

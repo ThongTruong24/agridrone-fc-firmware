@@ -47,6 +47,8 @@
 #include <uORB/topics/rc_channels.h>
 #include <uORB/topics/thaco_actuator_command.h>
 #include <uORB/topics/thaco_actuator_setpoint.h>
+#include <uORB/topics/vehicle_command.h>
+#include <uORB/topics/vehicle_command_ack.h>
 #include <uORB/topics/vehicle_status.h>
 
 using namespace time_literals;
@@ -68,6 +70,7 @@ private:
 	static constexpr hrt_abstime RC_TIMEOUT_US = 500_ms;
 	static constexpr hrt_abstime COMMAND_TIMEOUT_US = 500_ms;
 	static constexpr hrt_abstime DEBUG_INTERVAL_US = 100_ms;
+	static constexpr uint32_t THACO_MAV_CMD_ACTUATOR_CONTROL = 44001;
 
 	void Run() override;
 	static uint8_t scale_rc_value(float rc_value);
@@ -95,10 +98,12 @@ private:
 	uORB::SubscriptionCallbackWorkItem _actuator_armed_sub{this, ORB_ID(actuator_armed)};
 	uORB::Subscription _input_rc_sub{ORB_ID(input_rc)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 
 	uORB::Publication<thaco_actuator_command_s> _command_pub{ORB_ID(thaco_actuator_command)};
 	uORB::Publication<thaco_actuator_setpoint_s> _setpoint_pub{ORB_ID(thaco_actuator_setpoint)};
+	uORB::Publication<vehicle_command_ack_s> _vehicle_command_ack_pub{ORB_ID(vehicle_command_ack)};
 
 	thaco_actuator_setpoint_s _setpoint{};
 	uint8_t _source[thaco_actuator_setpoint_s::NUM_ACTUATORS] {};

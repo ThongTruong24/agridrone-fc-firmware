@@ -216,6 +216,7 @@ set(msg_files
 	TelemetryStatus.msg
 	ThacoActuatorCommand.msg
 	ThacoActuatorSetpoint.msg
+	ThacoExternalXyzTrigger.msg
 	TiltrotorExtraControls.msg
 	TimesyncStatus.msg
 	TrajectorySetpoint6dof.msg

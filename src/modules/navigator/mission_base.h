@@ -83,7 +83,6 @@ protected:
 	 */
 	static constexpr hrt_abstime MAX_DATAMAN_LOAD_WAIT{500_ms};
 
-	// Work Item corresponds to the sub-mode set on the "MAV_CMD_DO_SET_MODE" MAVLink message
 	enum class WorkItemType {
 		WORK_ITEM_TYPE_DEFAULT,		/**< default mission item */
 		WORK_ITEM_TYPE_CLIMB,		/**< takeoff before moving to waypoint */
@@ -109,6 +108,7 @@ protected:
 	 */
 	void getPreviousPositionItems(int32_t start_index, int32_t items_index[], size_t &num_found_items,
 				      uint8_t max_num_items);
+
 	/**
 	 * @brief Get the next mission item containing a position setpoint
 	 *
@@ -119,6 +119,7 @@ protected:
 	 */
 	void getNextPositionItems(int32_t start_index, int32_t items_index[], size_t &num_found_items,
 				  uint8_t max_num_items);
+
 	/**
 	 * @brief Mission has a land start, a land, and is valid
 	 *
@@ -234,6 +235,11 @@ protected:
 	 * Update mission topic
 	 */
 	void update_mission();
+
+	/**
+	 * Update the mission subscription.
+	 */
+	void updateMavlinkMission();
 
 	/**
 	 * Move on to next mission item or switch to loiter
@@ -357,12 +363,6 @@ private:
 	 *
 	 */
 	virtual void updateDatamanCache();
-	/**
-	 * @brief Update mission subscription
-	 *
-	 */
-	void updateMavlinkMission();
-
 	/**
 	 * Reset mission
 	 */

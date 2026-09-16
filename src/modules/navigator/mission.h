@@ -63,6 +63,12 @@ public:
 	virtual void on_activation() override;
 
 	bool set_current_mission_index(uint16_t index);
+	bool resolve_thaco_anchor(uint32_t mission_id, int32_t marker_seq, int32_t &anchor_seq);
+	bool rewind_thaco_to_anchor(uint32_t mission_id, int32_t marker_seq, int32_t anchor_seq);
+	bool validate_thaco_resume_context(uint32_t mission_id, int32_t marker_seq);
+	bool commit_thaco_resume(uint32_t mission_id, int32_t marker_seq, int32_t &resume_seq);
+	uint32_t get_mission_id() const { return _mission.mission_id; }
+	int32_t get_current_mission_index() const { return _mission.current_seq; }
 
 	uint16_t get_land_start_index() const { return _mission.land_start_index; }
 	bool get_land_start_available() const { return hasMissionLandStart(); }
@@ -95,4 +101,6 @@ private:
 				  size_t &num_found_items);
 
 	bool _need_mission_save{false};
+	uint32_t _thaco_reentry_mission_id{0};
+	int32_t _thaco_reentry_anchor_seq{-1};
 };

@@ -73,6 +73,7 @@
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/mission.h>
 #include <uORB/topics/mission_result.h>
+#include <uORB/topics/thaco_external_xyz_trigger.h>
 #include <uORB/topics/navigator_status.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/position_controller_landing_status.h>
@@ -153,6 +154,7 @@ public:
 	 */
 	void set_position_setpoint_triplet_updated() { _pos_sp_triplet_updated = true; }
 	void set_mission_result_updated() { _mission_result_updated = true; }
+	void start_thaco_handoff(uint32_t mission_id, int32_t marker_seq);
 
 	/**
 	 * Getters
@@ -322,6 +324,7 @@ private:
 
 	uORB::Publication<geofence_result_s>		_geofence_result_pub{ORB_ID(geofence_result)};
 	uORB::Publication<mission_result_s>		_mission_result_pub{ORB_ID(mission_result)};
+	uORB::Publication<thaco_external_xyz_trigger_s> _thaco_external_xyz_trigger_pub{ORB_ID(thaco_external_xyz_trigger)};
 	uORB::Publication<navigator_status_s>		_navigator_status_pub{ORB_ID(navigator_status)};
 	uORB::Publication<position_setpoint_triplet_s>	_pos_sp_triplet_pub{ORB_ID(position_setpoint_triplet)};
 	uORB::Publication<vehicle_command_ack_s>	_vehicle_cmd_ack_pub{ORB_ID(vehicle_command_ack)};
@@ -397,6 +400,59 @@ private:
 
 	bool _is_capturing_images{false}; // keep track if we need to stop capturing images
 
+	enum class ThacoHandoffState : uint8_t {
+		IDLE = 0,
+		WAITING_FOR_COMPANION,
+		RESUME_REQUESTED
+	};
+
+	static constexpr uint32_t MAV_CMD_THACO_EXTERNAL_XYZ_COMPLETE = 44002;
+	static constexpr uint32_t THACO_MAX_EXACT_TRIGGER_ID = (1u << 24);
+	static constexpr hrt_abstime THACO_TRIGGER_RETRY_INTERVAL{1_s};
+	static constexpr hrt_abstime THACO_RESUME_RETRY_INTERVAL{1_s};
+	static constexpr hrt_abstime THACO_RESUME_TIMEOUT{10_s};
+	static constexpr hrt_abstime THACO_COMPLETED_REPLAY_WINDOW{20_s};
+
+	ThacoHandoffState _thaco_handoff_state{ThacoHandoffState::IDLE};
+	uint32_t _thaco_next_trigger_id{0};
+	uint32_t _thaco_pending_trigger_id{0};
+	uint32_t _thaco_mission_id{0};
+	int32_t _thaco_marker_seq{-1};
+	int32_t _thaco_anchor_seq{-1};
+	int32_t _thaco_resume_seq{-1};
+	int32_t _thaco_last_resume_seq{-1};
+	hrt_abstime _thaco_trigger_timestamp{0};
+	hrt_abstime _thaco_last_trigger_publication{0};
+	hrt_abstime _thaco_resume_request_start{0};
+	hrt_abstime _thaco_last_resume_request{0};
+	uint32_t _thaco_trigger_publication_count{0};
+	uint32_t _thaco_resume_request_retry_count{0};
+	uint8_t _thaco_ack_target_system{0};
+	uint16_t _thaco_ack_target_component{0};
+	uint8_t _thaco_last_final_result{UINT8_MAX};
+	bool _thaco_ack_requester_valid{false};
+	bool _thaco_complete_received{false};
+	bool _thaco_last_resume_succeeded{false};
+	uint32_t _thaco_completed_trigger_id{0};
+	hrt_abstime _thaco_completed_timestamp{0};
+	uint8_t _thaco_completed_source_system{0};
+	uint16_t _thaco_completed_source_component{0};
+	uint8_t _thaco_completed_result{UINT8_MAX};
+	bool _thaco_completed_valid{false};
+
+	void publish_thaco_trigger();
+	void publish_thaco_command_ack(uint8_t result);
+	void handle_thaco_complete(const vehicle_command_s &cmd);
+	void request_thaco_mission_resume();
+	void update_thaco_handoff();
+	void cache_thaco_completed_transaction(uint8_t result);
+	void clear_thaco_completed_transaction();
+	void expire_thaco_completed_transaction();
+	void return_thaco_to_waiting(uint8_t final_result);
+	void cancel_thaco_handoff(const char *reason, bool rewind_to_anchor);
+	void clear_thaco_handoff(bool resume_succeeded);
+	const char *thaco_handoff_state_name() const;
+	const char *thaco_ack_result_name() const;
 
 	// timer to trigger a delayed set gimbal neutral command
 	hrt_abstime _gimbal_neutral_activation_time{UINT64_MAX};
@@ -416,7 +472,7 @@ private:
 
 	void publish_navigator_status();
 
-	void publish_vehicle_command_ack(const vehicle_command_s &cmd, uint8_t result);
+	void publish_vehicle_command_ack(const vehicle_command_s &cmd, uint8_t result, uint8_t progress = 0);
 
 	void publish_distance_sensor_mode_request();
 
