@@ -332,6 +332,65 @@ void ThacoActuator::Run()
 	}
 
 	bool setpoint_changed = false;
+
+	// Handle MAVLink THACO actuator control commands (44001)
+	vehicle_command_s vcmd{};
+	while (_vehicle_command_sub.update(&vcmd)) {
+		if (vcmd.command == THACO_MAV_CMD_ACTUATOR_CONTROL) {
+			uint8_t result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
+
+			// param1: actuator_index (0-7)
+			if (!PX4_ISFINITE(vcmd.param1)) {
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+			} else {
+				float p1 = vcmd.param1;
+				float p1_trunc = truncf(p1);
+				if (fabsf(p1 - p1_trunc) > 1e-6f || p1 < 0.0f || p1 > 7.0f) {
+					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+				}
+			}
+
+			// param2: value (0-255)
+			if (result == vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED && !PX4_ISFINITE(vcmd.param2)) {
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+			} else if (result == vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED) {
+				float p2 = vcmd.param2;
+				float p2_trunc = truncf(p2);
+				if (fabsf(p2 - p2_trunc) > 1e-6f || p2 < 0.0f || p2 > 255.0f) {
+					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
+				}
+			}
+
+			// param3..7: reserved - DO NOT VALIDATE
+
+			if (result == vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED) {
+				thaco_actuator_command_s cmd{};
+				cmd.timestamp = vcmd.timestamp;
+				cmd.actuator_index = static_cast<uint8_t>(vcmd.param1);
+				cmd.value = static_cast<uint8_t>(vcmd.param2);
+				cmd.source = thaco_actuator_command_s::SOURCE_MAVLINK;
+
+				bool accepted = process_command(cmd, now);
+				result = accepted ? vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED :
+						    vehicle_command_ack_s::VEHICLE_CMD_RESULT_FAILED;
+				setpoint_changed = true; // ensure fresh setpoint publication after MAVLink command
+			}
+
+			if (vcmd.from_external) {
+				vehicle_command_ack_s ack{};
+				ack.timestamp = hrt_absolute_time();
+				ack.command = vcmd.command;
+				ack.result = result;
+				ack.target_system = vcmd.source_system;
+				ack.target_component = vcmd.source_component;
+				ack.from_external = false;
+				ack.result_param1 = 0;
+				ack.result_param2 = 0;
+				_vehicle_command_ack_pub.publish(ack);
+			}
+		}
+	}
+
 	thaco_actuator_command_s command{};
 
 	while (_command_sub.update(&command)) {

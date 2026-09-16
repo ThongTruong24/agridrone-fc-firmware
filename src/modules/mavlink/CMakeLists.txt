@@ -32,10 +32,8 @@
 ############################################################################
 
 set(MAVLINK_GIT_DIR "${CMAKE_CURRENT_LIST_DIR}/mavlink")
-set(MAVLINK_DEFINITIONS_DIR "${CMAKE_CURRENT_LIST_DIR}/mavlink_definitions")
 set(MAVLINK_LIBRARY_DIR "${CMAKE_BINARY_DIR}/mavlink")
 file(RELATIVE_PATH MAVLINK_GIT_DIR_RELATIVE ${CMAKE_SOURCE_DIR} ${MAVLINK_GIT_DIR})
-file(RELATIVE_PATH MAVLINK_DEFINITIONS_DIR_RELATIVE ${CMAKE_SOURCE_DIR} ${MAVLINK_DEFINITIONS_DIR})
 
 px4_add_git_submodule(TARGET git_mavlink_v2 PATH "${MAVLINK_GIT_DIR}")
 
@@ -59,14 +57,8 @@ add_custom_target(mavlink_c_generate_uavionix DEPENDS ${MAVLINK_LIBRARY_DIR}/${M
 set_source_files_properties(${MAVLINK_LIBRARY_DIR}/${MAVLINK_DIALECT_UAVIONIX}/${MAVLINK_DIALECT_UAVIONIX}.h PROPERTIES GENERATED true)
 
 # Determine the XML source directory for the primary dialect
-# THACO custom dialects are in the parent repo's mavlink_definitions directory
-if(CONFIG_MAVLINK_DIALECT MATCHES "^thaco_")
-	set(MAVLINK_PRIMARY_XML_DIR "${MAVLINK_DEFINITIONS_DIR}/v1.0")
-	set(MAVLINK_PRIMARY_XML_DIR_RELATIVE "${MAVLINK_DEFINITIONS_DIR_RELATIVE}/v1.0")
-else()
-	set(MAVLINK_PRIMARY_XML_DIR "${MAVLINK_GIT_DIR}/message_definitions/v1.0")
-	set(MAVLINK_PRIMARY_XML_DIR_RELATIVE "${MAVLINK_GIT_DIR_RELATIVE}/message_definitions/v1.0")
-endif()
+set(MAVLINK_PRIMARY_XML_DIR "${MAVLINK_GIT_DIR}/message_definitions/v1.0")
+set(MAVLINK_PRIMARY_XML_DIR_RELATIVE "${MAVLINK_GIT_DIR_RELATIVE}/message_definitions/v1.0")
 
 # generate the primary dialect
 add_custom_command(
@@ -90,6 +82,7 @@ add_custom_command(
 )
 add_custom_target(mavlink_c_generate DEPENDS ${MAVLINK_LIBRARY_DIR}/${CONFIG_MAVLINK_DIALECT}/${CONFIG_MAVLINK_DIALECT}.h)
 set_source_files_properties(${MAVLINK_LIBRARY_DIR}/${CONFIG_MAVLINK_DIALECT}/${CONFIG_MAVLINK_DIALECT}.h PROPERTIES GENERATED true)
+add_dependencies(prebuild_targets mavlink_c_generate)
 
 
 

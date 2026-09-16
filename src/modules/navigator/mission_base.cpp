@@ -587,6 +587,11 @@ MissionBase::set_mission_item_reached()
 	_navigator->get_mission_result()->seq_reached = _mission.current_seq;
 	_navigator->set_mission_result_updated();
 
+	// Start one explicit THACO handoff if the current mission item is the marker.
+	if (_mission_item.nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ) {
+		_navigator->start_thaco_handoff(_mission.mission_id, _mission.current_seq);
+	}
+
 	reset_mission_item_reached();
 }
 

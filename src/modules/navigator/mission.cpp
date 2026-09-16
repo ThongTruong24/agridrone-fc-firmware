@@ -88,7 +88,16 @@ Mission::on_activation()
 
 	check_mission_valid(true);
 
+	// A cancelled THACO handoff already rewound current_seq to its positional anchor. Suppress the generic
+	// camera-survey rewind for this one activation so re-entry starts at that exact anchor, not an earlier waypoint.
+	if ((_thaco_reentry_anchor_seq >= 0) && (_mission.mission_id == _thaco_reentry_mission_id)
+	    && (_mission.current_seq == _thaco_reentry_anchor_seq)) {
+		_inactivation_index = -1;
+	}
+
 	MissionBase::on_activation();
+	_thaco_reentry_mission_id = 0;
+	_thaco_reentry_anchor_seq = -1;
 }
 
 
@@ -127,6 +136,137 @@ Mission::set_current_mission_index(uint16_t index)
 	}
 
 	return false;
+}
+
+bool
+Mission::resolve_thaco_anchor(uint32_t mission_id, int32_t marker_seq, int32_t &anchor_seq)
+{
+	updateMavlinkMission();
+
+	if ((_mission.mission_id != mission_id) || (_mission.current_seq != marker_seq)
+	    || (marker_seq <= 0) || (marker_seq >= _mission.count) || !isMissionValid()) {
+		return false;
+	}
+
+	mission_item_s marker_item{};
+	const dm_item_t mission_dataman_id = static_cast<dm_item_t>(_mission.mission_dataman_id);
+
+	if (!_dataman_cache.loadWait(mission_dataman_id, marker_seq, reinterpret_cast<uint8_t *>(&marker_item),
+				     sizeof(marker_item), MAX_DATAMAN_LOAD_WAIT)
+	    || (marker_item.nav_cmd != NAV_CMD_THACO_EXTERNAL_XYZ)) {
+		return false;
+	}
+
+	int32_t previous_position_seq{-1};
+	size_t num_found_items{0};
+	getPreviousPositionItems(marker_seq, &previous_position_seq, num_found_items, 1U);
+
+	if ((num_found_items != 1U) || (previous_position_seq < 0) || (previous_position_seq >= marker_seq)) {
+		return false;
+	}
+
+	mission_item_s anchor_item{};
+
+	if (!_dataman_cache.loadWait(mission_dataman_id, previous_position_seq, reinterpret_cast<uint8_t *>(&anchor_item),
+				     sizeof(anchor_item), MAX_DATAMAN_LOAD_WAIT)
+	    || !item_contains_position(anchor_item)) {
+		return false;
+	}
+
+	anchor_seq = previous_position_seq;
+	return true;
+}
+
+bool
+Mission::rewind_thaco_to_anchor(uint32_t mission_id, int32_t marker_seq, int32_t anchor_seq)
+{
+	updateMavlinkMission();
+
+	if ((_mission.mission_id != mission_id) || (_mission.current_seq != marker_seq)
+	    || (anchor_seq < 0) || (anchor_seq >= marker_seq) || !isMissionValid()) {
+		return false;
+	}
+
+	const dm_item_t mission_dataman_id = static_cast<dm_item_t>(_mission.mission_dataman_id);
+	mission_item_s marker_item{};
+	mission_item_s anchor_item{};
+
+	if (!_dataman_cache.loadWait(mission_dataman_id, marker_seq, reinterpret_cast<uint8_t *>(&marker_item),
+				     sizeof(marker_item), MAX_DATAMAN_LOAD_WAIT)
+	    || (marker_item.nav_cmd != NAV_CMD_THACO_EXTERNAL_XYZ)
+	    || !_dataman_cache.loadWait(mission_dataman_id, anchor_seq, reinterpret_cast<uint8_t *>(&anchor_item),
+					sizeof(anchor_item), MAX_DATAMAN_LOAD_WAIT)
+	    || !item_contains_position(anchor_item)) {
+		return false;
+	}
+
+	setMissionIndex(anchor_seq);
+	_thaco_reentry_mission_id = mission_id;
+	_thaco_reentry_anchor_seq = anchor_seq;
+	_inactivation_index = -1;
+	return true;
+}
+
+bool
+Mission::validate_thaco_resume_context(uint32_t mission_id, int32_t marker_seq)
+{
+	// Consume any mission replacement/reset before validating the stored handoff context.
+	updateMavlinkMission();
+
+	if ((_mission.mission_id != mission_id) || (_mission.current_seq != marker_seq)
+	    || (marker_seq < 0) || (marker_seq >= _mission.count) || !isMissionValid()) {
+		return false;
+	}
+
+	mission_item_s marker_item{};
+	const dm_item_t mission_dataman_id = static_cast<dm_item_t>(_mission.mission_dataman_id);
+
+	if (!_dataman_cache.loadWait(mission_dataman_id, marker_seq, reinterpret_cast<uint8_t *>(&marker_item),
+				     sizeof(marker_item), MAX_DATAMAN_LOAD_WAIT)
+	    || (marker_item.nav_cmd != NAV_CMD_THACO_EXTERNAL_XYZ)) {
+		return false;
+	}
+
+	int32_t next_mission_index = marker_seq + 1;
+	mission_item_s next_mission_item{};
+
+	return getNonJumpItem(next_mission_index, next_mission_item, true, false, false) == PX4_OK;
+}
+
+bool
+Mission::commit_thaco_resume(uint32_t mission_id, int32_t marker_seq, int32_t &resume_seq)
+{
+	if (!isActive() || !validate_thaco_resume_context(mission_id, marker_seq)) {
+		return false;
+	}
+
+	if (goToNextItem(true) != PX4_OK) {
+		return false;
+	}
+
+	_is_current_planned_mission_item_valid = true;
+	_inactivation_index = _mission.current_seq;
+
+	if (!loadCurrentMissionItem()) {
+		setMissionIndex(marker_seq);
+		_is_current_planned_mission_item_valid = true;
+		update_mission();
+		set_mission_items();
+		return false;
+	}
+
+	setActiveMissionItems();
+
+	if ((_mission_type != MissionType::MISSION_TYPE_MISSION) || !_is_current_planned_mission_item_valid) {
+		setMissionIndex(marker_seq);
+		_is_current_planned_mission_item_valid = true;
+		update_mission();
+		set_mission_items();
+		return false;
+	}
+
+	resume_seq = _mission.current_seq;
+	return true;
 }
 
 bool Mission::setNextMissionItem()
@@ -251,6 +391,7 @@ void Mission::setActiveMissionItems()
 		if (item_contains_position(_mission_item) && pos_sp_triplet->next.valid
 		    && (_mission.current_seq + 1 < _mission.count)) {
 			mission_item_s immediate_next_item{};
+
 			if (_dataman_cache.loadWait(mission_dataman_id, _mission.current_seq + 1,
 						    reinterpret_cast<uint8_t *>(&immediate_next_item), sizeof(immediate_next_item), MAX_DATAMAN_LOAD_WAIT)) {
 				if (immediate_next_item.nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ) {
@@ -280,6 +421,7 @@ void Mission::setActiveMissionItems()
 		if (_mission_item.nav_cmd == NAV_CMD_THACO_EXTERNAL_XYZ) {
 			// Hold the previous position setpoint while waiting for external control.
 			pos_sp_triplet->next.valid = false;
+
 		} else {
 			handleVtolTransition(new_work_item_type, next_mission_items, num_found_items);
 		}

@@ -49,6 +49,7 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/mission_result.h>
+#include <uORB/topics/thaco_external_xyz_trigger.h>
 #include <uORB/topics/vehicle_status.h>
 
 #include "mavlink_bridge_header.h"
@@ -150,6 +151,7 @@ private:
 
 	uORB::SubscriptionData<mission_result_s>	_mission_result_sub{ORB_ID(mission_result)};
 	uORB::SubscriptionData<mission_s> 	_mission_sub{ORB_ID(mission)};
+	uORB::SubscriptionData<thaco_external_xyz_trigger_s> _thaco_external_xyz_trigger_sub{ORB_ID(thaco_external_xyz_trigger)};
 	uORB::Subscription	_vehicle_status_sub{ORB_ID(vehicle_status)};	///< vehicle status subscription
 
 	uORB::Publication<mission_s>	_offboard_mission_pub{ORB_ID(mission)};

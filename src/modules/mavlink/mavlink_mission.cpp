@@ -499,6 +499,15 @@ MavlinkMissionManager::send()
 		return;
 	}
 
+	// Handle THACO_EXTERNAL_XYZ trigger
+	if (_thaco_external_xyz_trigger_sub.update()) {
+		const thaco_external_xyz_trigger_s &trigger = _thaco_external_xyz_trigger_sub.get();
+		mavlink_thaco_external_xyz_trigger_t msg{};
+		msg.trigger_id = trigger.trigger_id;
+		msg.time_boot_ms = trigger.time_boot_ms;
+		mavlink_msg_thaco_external_xyz_trigger_send_struct(_mavlink.get_channel(), &msg);
+		PX4_DEBUG("WPM: Send THACO_EXTERNAL_XYZ_TRIGGER trigger_id=%u", msg.trigger_id);
+	}
 
 	if (_mission_result_sub.update()) {
 		const mission_result_s &mission_result = _mission_result_sub.get();
