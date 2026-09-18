@@ -214,6 +214,7 @@ set(msg_files
 	TaskStackInfo.msg
 	TecsStatus.msg
 	TelemetryStatus.msg
+	ThacoAvoidanceTarget.msg
 	TiltrotorExtraControls.msg
 	TimesyncStatus.msg
 	TrajectorySetpoint6dof.msg

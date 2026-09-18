@@ -324,6 +324,12 @@ MavlinkReceiver::handle_message(mavlink_message_t *msg)
 		handle_message_gimbal_device_attitude_status(msg);
 		break;
 
+#if defined(MAVLINK_MSG_ID_THACO_AVOIDANCE_TARGET)
+	case MAVLINK_MSG_ID_THACO_AVOIDANCE_TARGET:
+		handle_message_thaco_avoidance_target(msg);
+		break;
+#endif
+
 #if defined(MAVLINK_MSG_ID_SET_VELOCITY_LIMITS) // For now only defined if development.xml is used
 
 	case MAVLINK_MSG_ID_SET_VELOCITY_LIMITS:
@@ -457,6 +463,42 @@ MavlinkReceiver::evaluate_target_ok(int command, int target_system, int target_c
 
 	return target_ok;
 }
+
+#if defined(MAVLINK_MSG_ID_THACO_AVOIDANCE_TARGET)
+void MavlinkReceiver::handle_message_thaco_avoidance_target(mavlink_message_t *msg)
+{
+	mavlink_thaco_avoidance_target_t mavlink_target{};
+	mavlink_msg_thaco_avoidance_target_decode(msg, &mavlink_target);
+
+	const bool target_system_matches = mavlink_target.target_system == mavlink_system.sysid;
+	const bool target_component_matches = mavlink_target.target_component == mavlink_system.compid
+					      || mavlink_target.target_component == MAV_COMP_ID_ALL;
+
+	if (!target_system_matches || !target_component_matches
+	    || mavlink_target.state > thaco_avoidance_target_s::STATE_FAULT
+	    || !PX4_ISFINITE(mavlink_target.x)
+	    || !PX4_ISFINITE(mavlink_target.y)
+	    || !PX4_ISFINITE(mavlink_target.z)
+	    || !PX4_ISFINITE(mavlink_target.max_speed)) {
+		return;
+	}
+
+	thaco_avoidance_target_s target{};
+	target.timestamp = hrt_absolute_time();
+	target.sequence = mavlink_target.sequence;
+	target.state = mavlink_target.state;
+	target.flags = mavlink_target.flags;
+	target.xy_reset_counter = mavlink_target.xy_reset_counter;
+	target.z_reset_counter = mavlink_target.z_reset_counter;
+	target.source_system = msg->sysid;
+	target.source_component = msg->compid;
+	target.x = mavlink_target.x;
+	target.y = mavlink_target.y;
+	target.z = mavlink_target.z;
+	target.max_speed = mavlink_target.max_speed;
+	_thaco_avoidance_target_pub.publish(target);
+}
+#endif
 
 void
 MavlinkReceiver::handle_message_command_long(mavlink_message_t *msg)

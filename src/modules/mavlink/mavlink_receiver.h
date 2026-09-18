@@ -97,6 +97,7 @@
 #include <uORB/topics/sensor_gps.h>
 #include <uORB/topics/sensor_optical_flow.h>
 #include <uORB/topics/telemetry_status.h>
+#include <uORB/topics/thaco_avoidance_target.h>
 #include <uORB/topics/transponder_report.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/tune_control.h>
@@ -198,6 +199,9 @@ private:
 	void handle_message_set_position_target_global_int(mavlink_message_t *msg);
 	void handle_message_set_position_target_local_ned(mavlink_message_t *msg);
 	void handle_message_statustext(mavlink_message_t *msg);
+#if defined(MAVLINK_MSG_ID_THACO_AVOIDANCE_TARGET)
+	void handle_message_thaco_avoidance_target(mavlink_message_t *msg);
+#endif
 	void handle_message_tunnel(mavlink_message_t *msg);
 	void handle_message_utm_global_position(mavlink_message_t *msg);
 #if defined(MAVLINK_MSG_ID_SET_VELOCITY_LIMITS) // For now only defined if development.xml is used
@@ -325,6 +329,9 @@ private:
 	uORB::Publication<vehicle_global_position_s>		_global_pos_pub{ORB_ID(vehicle_global_position)};
 	uORB::Publication<vehicle_local_position_s>		_local_pos_pub{ORB_ID(vehicle_local_position)};
 	uORB::Publication<trajectory_setpoint_s>		_trajectory_setpoint_pub{ORB_ID(trajectory_setpoint)};
+#if defined(MAVLINK_MSG_ID_THACO_AVOIDANCE_TARGET)
+	uORB::Publication<thaco_avoidance_target_s>		_thaco_avoidance_target_pub{ORB_ID(thaco_avoidance_target)};
+#endif
 	uORB::Publication<vehicle_odometry_s>			_mocap_odometry_pub{ORB_ID(vehicle_mocap_odometry)};
 	uORB::Publication<vehicle_odometry_s>			_visual_odometry_pub{ORB_ID(vehicle_visual_odometry)};
 	uORB::Publication<vehicle_rates_setpoint_s>		_rates_sp_pub{ORB_ID(vehicle_rates_setpoint)};

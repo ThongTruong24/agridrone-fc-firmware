@@ -34,3 +34,19 @@
 /**
  * @file flight_mode_manager_params.c
  */
+
+/**
+ * THACO avoidance target timeout
+ *
+ * Time without a new THACO avoidance target before an active avoidance
+ * maneuver is stopped and held. A CLEAR message is not considered active,
+ * so its expiry does not interrupt the mission.
+ *
+ * @unit s
+ * @min 0.1
+ * @max 2.0
+ * @decimal 2
+ * @increment 0.05
+ * @group Mission
+ */
+PARAM_DEFINE_FLOAT(THACO_AVD_TOUT, 0.30f);

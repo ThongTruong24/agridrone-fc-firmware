@@ -44,6 +44,7 @@
 #include <uORB/topics/position_setpoint.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/manual_control_setpoint.h>
+#include <uORB/topics/thaco_avoidance_target.h>
 #include <uORB/topics/vehicle_status.h>
 #include <lib/geo/geo.h>
 #include <lib/mathlib/math/filter/AlphaFilter.hpp>
@@ -108,6 +109,7 @@ protected:
 	void _ekfResetHandlerHeading(float delta_psi) override;
 
 	void _checkEmergencyBraking();
+	void _updateAvoidanceTarget();
 	bool _generateHeadingAlongTraj(); /**< Generates heading along trajectory. */
 	bool isTargetModified() const;
 	void _updateTrajConstraints();
@@ -133,6 +135,7 @@ protected:
 
 	uORB::SubscriptionData<home_position_s>			_sub_home_position{ORB_ID(home_position)};
 	uORB::SubscriptionData<vehicle_status_s>		_sub_vehicle_status{ORB_ID(vehicle_status)};
+	uORB::SubscriptionData<thaco_avoidance_target_s>	_sub_thaco_avoidance_target{ORB_ID(thaco_avoidance_target)};
 
 	State _current_state{State::none};
 	float _target_acceptance_radius{0.0f}; /**< Acceptances radius of the target */
@@ -151,6 +154,16 @@ protected:
 	WaypointType _type_previous{WaypointType::idle}; /**< Previous type of current target triplet. */
 	bool _is_emergency_braking_active{false};
 	bool _want_takeoff{false};
+
+	enum class AvoidanceMode : uint8_t {
+		inactive,
+		active,
+		hold
+	};
+
+	AvoidanceMode _avoidance_mode{AvoidanceMode::inactive};
+	matrix::Vector3f _avoidance_hold_position{};
+	float _avoidance_speed_limit{NAN};
 
 	DEFINE_PARAMETERS_CUSTOM_PARENT(FlightTask,
 					(ParamFloat<px4::params::MPC_XY_CRUISE>) _param_mpc_xy_cruise,
@@ -176,7 +189,8 @@ protected:
 					(ParamFloat<px4::params::MPC_Z_V_AUTO_UP>) _param_mpc_z_v_auto_up,
 					(ParamFloat<px4::params::MPC_Z_V_AUTO_DN>) _param_mpc_z_v_auto_dn,
 					(ParamFloat<px4::params::MPC_TKO_SPEED>) _param_mpc_tko_speed,
-					(ParamFloat<px4::params::MPC_TKO_RAMP_T>) _param_mpc_tko_ramp_t
+					(ParamFloat<px4::params::MPC_TKO_RAMP_T>) _param_mpc_tko_ramp_t,
+					(ParamFloat<px4::params::THACO_AVD_TOUT>) _param_thaco_avd_tout
 				       );
 
 private:

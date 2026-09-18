@@ -76,6 +76,8 @@ bool FlightTaskAuto::activate(const trajectory_setpoint_s &last_setpoint)
 
 	_updateTrajConstraints();
 	_is_emergency_braking_active = false;
+	_avoidance_mode = AvoidanceMode::inactive;
+	_avoidance_speed_limit = NAN;
 	_time_last_cruise_speed_override = 0;
 
 	return ret;
@@ -96,6 +98,7 @@ bool FlightTaskAuto::updateInitialize()
 	_sub_home_position.update();
 	_sub_vehicle_status.update();
 	_sub_triplet_setpoint.update();
+	_sub_thaco_avoidance_target.update();
 
 	// require valid reference and valid target
 	ret = ret && _evaluateGlobalReference() && _evaluateTriplets();
@@ -159,6 +162,8 @@ bool FlightTaskAuto::update()
 		break;
 	}
 
+	_updateAvoidanceTarget();
+
 	_checkEmergencyBraking();
 	Vector3f waypoints[] = {_prev_wp, _position_setpoint, _next_wp};
 
@@ -169,7 +174,8 @@ bool FlightTaskAuto::update()
 
 	const bool should_wait_for_yaw_align = _param_mpc_yaw_mode.get() == int32_t(yaw_mode::towards_waypoint_yaw_first)
 					       && !_yaw_sp_aligned;
-	const bool force_zero_velocity_setpoint = should_wait_for_yaw_align || _is_emergency_braking_active;
+	const bool force_zero_velocity_setpoint = should_wait_for_yaw_align || _is_emergency_braking_active
+						 || (_type != WaypointType::idle && _avoidance_mode == AvoidanceMode::hold);
 	_updateTrajConstraints();
 	PositionSmoothing::PositionSmoothingSetpoints smoothed_setpoints;
 	_position_smoothing.generateSetpoints(
@@ -748,6 +754,67 @@ void FlightTaskAuto::_checkEmergencyBraking()
 	}
 }
 
+void FlightTaskAuto::_updateAvoidanceTarget()
+{
+	if (_sub_vehicle_status.get().nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION) {
+		_avoidance_mode = AvoidanceMode::inactive;
+		_avoidance_speed_limit = NAN;
+		return;
+	}
+
+	const thaco_avoidance_target_s &avoidance = _sub_thaco_avoidance_target.get();
+	const hrt_abstime timeout = static_cast<hrt_abstime>(math::max(_param_thaco_avd_tout.get(), 0.05f) * 1e6f);
+	const bool fresh = avoidance.timestamp != 0 && avoidance.timestamp <= _time_stamp_current
+			   && (_time_stamp_current - avoidance.timestamp) <= timeout;
+	const bool use_z = (avoidance.flags & thaco_avoidance_target_s::FLAG_USE_Z) != 0;
+	const bool reset_counters_match = avoidance.xy_reset_counter == _sub_vehicle_local_position.get().xy_reset_counter
+					  && (!use_z
+					      || avoidance.z_reset_counter == _sub_vehicle_local_position.get().z_reset_counter);
+	const bool target_finite = PX4_ISFINITE(avoidance.x) && PX4_ISFINITE(avoidance.y)
+				   && (!use_z || PX4_ISFINITE(avoidance.z));
+	const bool active_target_valid = fresh && avoidance.state == thaco_avoidance_target_s::STATE_ACTIVE
+					 && reset_counters_match && target_finite;
+
+	if (active_target_valid) {
+		_avoidance_mode = AvoidanceMode::active;
+		_avoidance_speed_limit = avoidance.max_speed > 0.f ? avoidance.max_speed : NAN;
+
+	} else if (fresh && avoidance.state == thaco_avoidance_target_s::STATE_CLEAR) {
+		_avoidance_mode = AvoidanceMode::inactive;
+		_avoidance_speed_limit = NAN;
+
+	} else if (fresh && (avoidance.state == thaco_avoidance_target_s::STATE_NO_PATH
+			     || avoidance.state == thaco_avoidance_target_s::STATE_FAULT)) {
+		if (_avoidance_mode != AvoidanceMode::hold) {
+			_avoidance_hold_position = _position;
+		}
+
+		_avoidance_mode = AvoidanceMode::hold;
+		_avoidance_speed_limit = NAN;
+
+	} else if (_avoidance_mode == AvoidanceMode::active) {
+		// An active stream that times out or becomes stale after an EKF reset must brake instead of resuming the mission.
+		_avoidance_hold_position = _position;
+		_avoidance_mode = AvoidanceMode::hold;
+		_avoidance_speed_limit = NAN;
+	}
+
+	if (_type == WaypointType::idle) {
+		return;
+	}
+
+	if (_avoidance_mode == AvoidanceMode::active) {
+		_position_setpoint(0) = avoidance.x;
+		_position_setpoint(1) = avoidance.y;
+		_position_setpoint(2) = use_z ? avoidance.z : _target(2);
+		_velocity_setpoint.setNaN();
+
+	} else if (_avoidance_mode == AvoidanceMode::hold) {
+		_position_setpoint = _avoidance_hold_position;
+		_velocity_setpoint.setNaN();
+	}
+}
+
 bool FlightTaskAuto::_generateHeadingAlongTraj()
 {
 	bool res = false;
@@ -776,16 +843,24 @@ bool FlightTaskAuto::isTargetModified() const
 
 void FlightTaskAuto::_updateTrajConstraints()
 {
+	float cruise_speed = _mc_cruise_speed;
+	float max_velocity_xy = _param_mpc_xy_vel_max.get();
+
+	if (_avoidance_mode == AvoidanceMode::active && PX4_ISFINITE(_avoidance_speed_limit)) {
+		cruise_speed = math::min(cruise_speed, _avoidance_speed_limit);
+		max_velocity_xy = math::min(max_velocity_xy, _avoidance_speed_limit);
+	}
+
 	// update params of the position smoothing
 	_position_smoothing.setMaxAllowedHorizontalError(_param_mpc_xy_err_max.get());
 	_position_smoothing.setVerticalAcceptanceRadius(_param_nav_mc_alt_rad.get());
-	_position_smoothing.setCruiseSpeed(_mc_cruise_speed);
+	_position_smoothing.setCruiseSpeed(cruise_speed);
 	_position_smoothing.setHorizontalTrajectoryGain(_param_mpc_xy_traj_p.get());
 	_position_smoothing.setTargetAcceptanceRadius(_target_acceptance_radius);
 
 	// Update the constraints of the trajectories
 	_position_smoothing.setMaxAccelerationXY(_param_mpc_acc_hor.get()); // TODO : Should be computed using heading
-	_position_smoothing.setMaxVelocityXY(_param_mpc_xy_vel_max.get());
+	_position_smoothing.setMaxVelocityXY(max_velocity_xy);
 	_position_smoothing.setMaxJerk(_param_mpc_jerk_auto.get()); // TODO : Should be computed using heading
 
 	if (_is_emergency_braking_active) {
@@ -818,12 +893,20 @@ void FlightTaskAuto::_updateTrajConstraints()
 			_position_smoothing.forceSetPosition({NAN, NAN, _position(2)});
 		}
 
+		if (_avoidance_mode == AvoidanceMode::active && PX4_ISFINITE(_avoidance_speed_limit)) {
+			z_vel_constraint = math::min(z_vel_constraint, _avoidance_speed_limit);
+		}
+
 		_position_smoothing.setMaxVelocityZ(z_vel_constraint);
 		_position_smoothing.setMaxAccelerationZ(z_accel_constraint);
 
 	} else { // down
 		_position_smoothing.setMaxAccelerationZ(_param_mpc_acc_down_max.get());
-		_position_smoothing.setMaxVelocityZ(_param_mpc_z_v_auto_dn.get());
+		const float z_vel_constraint = _avoidance_mode == AvoidanceMode::active
+					       && PX4_ISFINITE(_avoidance_speed_limit)
+					       ? math::min(_param_mpc_z_v_auto_dn.get(), _avoidance_speed_limit)
+					       : _param_mpc_z_v_auto_dn.get();
+		_position_smoothing.setMaxVelocityZ(z_vel_constraint);
 	}
 
 	// Stretch the constraints of the velocity controller to leave some room for an additional
