@@ -442,9 +442,11 @@ private:
 
 	void publish_thaco_trigger();
 	void publish_thaco_command_ack(uint8_t result);
+	static bool parse_thaco_trigger_id(float value, uint32_t &trigger_id);
 	void handle_thaco_complete(const vehicle_command_s &cmd);
 	void request_thaco_mission_resume();
 	void update_thaco_handoff();
+	void update_thaco_resume_requested();
 	void cache_thaco_completed_transaction(uint8_t result);
 	void clear_thaco_completed_transaction();
 	void expire_thaco_completed_transaction();

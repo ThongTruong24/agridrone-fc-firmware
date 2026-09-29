@@ -288,22 +288,30 @@ void Navigator::request_thaco_mission_resume()
 	_thaco_resume_request_retry_count++;
 }
 
+bool Navigator::parse_thaco_trigger_id(float value, uint32_t &trigger_id)
+{
+	// COMMAND_LONG parameters are float. Keep IDs in [1, 2^24], where every integer is exactly representable.
+	if (PX4_ISFINITE(value) && (value >= 1.f)
+	    && (value <= static_cast<float>(THACO_MAX_EXACT_TRIGGER_ID))) {
+		float integer_part{0.f};
+
+		if (fabsf(modff(value, &integer_part)) < FLT_MIN) {
+			trigger_id = static_cast<uint32_t>(value);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void Navigator::handle_thaco_complete(const vehicle_command_s &cmd)
 {
 	expire_thaco_completed_transaction();
 
 	uint8_t result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED;
-	bool trigger_id_is_exact_integer{false};
+	uint32_t trigger_id{};
 
-	// COMMAND_LONG parameters are float. Keep IDs in [1, 2^24], where every integer is exactly representable.
-	if (PX4_ISFINITE(cmd.param1) && (cmd.param1 >= 1.f)
-	    && (cmd.param1 <= static_cast<float>(THACO_MAX_EXACT_TRIGGER_ID))) {
-		float integer_part{0.f};
-		trigger_id_is_exact_integer = fabsf(modff(cmd.param1, &integer_part)) < FLT_MIN;
-	}
-
-	if (trigger_id_is_exact_integer) {
-		const uint32_t trigger_id = static_cast<uint32_t>(cmd.param1);
+	if (parse_thaco_trigger_id(cmd.param1, trigger_id)) {
 
 		if ((_thaco_handoff_state == ThacoHandoffState::WAITING_FOR_COMPANION)
 		    && (_thaco_pending_trigger_id != 0)
@@ -420,6 +428,39 @@ void Navigator::cancel_thaco_handoff(const char *reason, bool rewind_to_anchor)
 	}
 }
 
+void Navigator::update_thaco_resume_requested()
+{
+	if ((_vstatus.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION) && _mission.isActive()) {
+		int32_t resume_seq{-1};
+
+		if (_mission.commit_thaco_resume(_thaco_mission_id, _thaco_marker_seq, resume_seq)) {
+			const uint32_t completed_trigger_id = _thaco_pending_trigger_id;
+			_thaco_resume_seq = resume_seq;
+			_thaco_last_resume_seq = resume_seq;
+			cache_thaco_completed_transaction(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
+			publish_thaco_command_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
+			clear_thaco_handoff(true);
+			PX4_INFO("THACO mission resume succeeded: trigger=%" PRIu32, completed_trigger_id);
+
+		} else {
+			PX4_WARN("THACO mission commit failed: trigger=%" PRIu32, _thaco_pending_trigger_id);
+			return_thaco_to_waiting(vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
+		}
+
+		return;
+	}
+
+	if (hrt_elapsed_time(&_thaco_resume_request_start) >= THACO_RESUME_TIMEOUT) {
+		PX4_WARN("THACO mission resume timed out: trigger=%" PRIu32, _thaco_pending_trigger_id);
+		return_thaco_to_waiting(vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
+		return;
+	}
+
+	if (hrt_elapsed_time(&_thaco_last_resume_request) >= THACO_RESUME_RETRY_INTERVAL) {
+		request_thaco_mission_resume();
+	}
+}
+
 void Navigator::update_thaco_handoff()
 {
 	expire_thaco_completed_transaction();
@@ -466,35 +507,7 @@ void Navigator::update_thaco_handoff()
 	}
 
 	if (_thaco_handoff_state == ThacoHandoffState::RESUME_REQUESTED) {
-		if ((_vstatus.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION) && _mission.isActive()) {
-			int32_t resume_seq{-1};
-
-			if (_mission.commit_thaco_resume(_thaco_mission_id, _thaco_marker_seq, resume_seq)) {
-				const uint32_t completed_trigger_id = _thaco_pending_trigger_id;
-				_thaco_resume_seq = resume_seq;
-				_thaco_last_resume_seq = resume_seq;
-				cache_thaco_completed_transaction(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
-				publish_thaco_command_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
-				clear_thaco_handoff(true);
-				PX4_INFO("THACO mission resume succeeded: trigger=%" PRIu32, completed_trigger_id);
-
-			} else {
-				PX4_WARN("THACO mission commit failed: trigger=%" PRIu32, _thaco_pending_trigger_id);
-				return_thaco_to_waiting(vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
-			}
-
-			return;
-		}
-
-		if (hrt_elapsed_time(&_thaco_resume_request_start) >= THACO_RESUME_TIMEOUT) {
-			PX4_WARN("THACO mission resume timed out: trigger=%" PRIu32, _thaco_pending_trigger_id);
-			return_thaco_to_waiting(vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
-			return;
-		}
-
-		if (hrt_elapsed_time(&_thaco_last_resume_request) >= THACO_RESUME_RETRY_INTERVAL) {
-			request_thaco_mission_resume();
-		}
+		update_thaco_resume_requested();
 	}
 }
 

@@ -388,7 +388,7 @@ void Mission::setActiveMissionItems()
 
 		/* Prevent position lookahead past the THACO external-control marker
 		 * so the vehicle stops at the current waypoint before handover. */
-		if (item_contains_position(_mission_item) && pos_sp_triplet->next.valid
+		if (pos_sp_triplet->next.valid
 		    && (_mission.current_seq + 1 < _mission.count)) {
 			mission_item_s immediate_next_item{};
 

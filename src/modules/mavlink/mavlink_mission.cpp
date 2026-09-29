@@ -499,7 +499,6 @@ MavlinkMissionManager::send()
 		return;
 	}
 
-	// Handle THACO_EXTERNAL_XYZ trigger
 	if (_thaco_external_xyz_trigger_sub.update()) {
 		const thaco_external_xyz_trigger_s &trigger = _thaco_external_xyz_trigger_sub.get();
 		mavlink_thaco_external_xyz_trigger_t msg{};

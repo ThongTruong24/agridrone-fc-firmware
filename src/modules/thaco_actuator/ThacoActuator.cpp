@@ -295,45 +295,10 @@ void ThacoActuator::publish_setpoint()
 	_setpoint_pub.publish(_setpoint);
 }
 
-void ThacoActuator::Run()
+bool ThacoActuator::handle_mavlink_actuator_commands(hrt_abstime now)
 {
-	if (should_exit()) {
-		ScheduleClear();
-		_command_sub.unregisterCallback();
-		_rc_channels_sub.unregisterCallback();
-		_actuator_armed_sub.unregisterCallback();
-		exit_and_cleanup();
-		return;
-	}
-
-	if (_parameter_update_sub.updated()) {
-		parameter_update_s parameter_update{};
-		_parameter_update_sub.copy(&parameter_update);
-		updateParams();
-		update_limits();
-	}
-
-	const hrt_abstime now = hrt_absolute_time();
-	_vehicle_status_sub.update(&_vehicle_status);
-	actuator_armed_s actuator_armed{};
-
-	if (_actuator_armed_sub.update(&actuator_armed)) {
-		_actuator_armed = actuator_armed;
-		_actuator_armed_received = true;
-	}
-
-	if (_input_rc_sub.update(&_input_rc)) {
-		_input_rc_received = true;
-	}
-
-	if (_rc_channels_sub.update(&_rc_channels)) {
-		_rc_channels_received = true;
-		publish_rc_commands(now);
-	}
-
 	bool setpoint_changed = false;
 
-	// Handle MAVLink THACO actuator control commands (44001)
 	vehicle_command_s vcmd{};
 	while (_vehicle_command_sub.update(&vcmd)) {
 		if (vcmd.command == THACO_MAV_CMD_ACTUATOR_CONTROL) {
@@ -390,6 +355,47 @@ void ThacoActuator::Run()
 			}
 		}
 	}
+
+	return setpoint_changed;
+}
+
+void ThacoActuator::Run()
+{
+	if (should_exit()) {
+		ScheduleClear();
+		_command_sub.unregisterCallback();
+		_rc_channels_sub.unregisterCallback();
+		_actuator_armed_sub.unregisterCallback();
+		exit_and_cleanup();
+		return;
+	}
+
+	if (_parameter_update_sub.updated()) {
+		parameter_update_s parameter_update{};
+		_parameter_update_sub.copy(&parameter_update);
+		updateParams();
+		update_limits();
+	}
+
+	const hrt_abstime now = hrt_absolute_time();
+	_vehicle_status_sub.update(&_vehicle_status);
+	actuator_armed_s actuator_armed{};
+
+	if (_actuator_armed_sub.update(&actuator_armed)) {
+		_actuator_armed = actuator_armed;
+		_actuator_armed_received = true;
+	}
+
+	if (_input_rc_sub.update(&_input_rc)) {
+		_input_rc_received = true;
+	}
+
+	if (_rc_channels_sub.update(&_rc_channels)) {
+		_rc_channels_received = true;
+		publish_rc_commands(now);
+	}
+
+	bool setpoint_changed = handle_mavlink_actuator_commands(now);
 
 	thaco_actuator_command_s command{};
 

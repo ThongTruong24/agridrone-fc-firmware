@@ -80,6 +80,7 @@ private:
 	void publish_rc_commands(hrt_abstime now);
 	void print_debug(hrt_abstime now);
 	bool process_command(const thaco_actuator_command_s &command, hrt_abstime now);
+	bool handle_mavlink_actuator_commands(hrt_abstime now);
 	bool update_output_policy(hrt_abstime now);
 	bool safety_inhibited() const;
 	void update_limits();
