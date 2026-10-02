@@ -171,6 +171,14 @@ endif
 # --------------------------------------------------------------------
 # describe how to build a cmake config
 define cmake-build
+	@echo "[Agridrone] Synchronizing MAVLink from origin/main..."
+	@git -C "$(SRC_DIR)" submodule sync -- src/modules/mavlink/mavlink
+	@git -C "$(SRC_DIR)" submodule update --init src/modules/mavlink/mavlink
+	@git -C "$(SRC_DIR)/src/modules/mavlink/mavlink" fetch origin main
+	@git -C "$(SRC_DIR)/src/modules/mavlink/mavlink" checkout --detach -f origin/main
+	@echo "[Agridrone] MAVLink revision:"
+	@git -C "$(SRC_DIR)/src/modules/mavlink/mavlink" log -1 --oneline
+
 	$(eval override CMAKE_ARGS += -DCONFIG=$(1))
 	@$(eval BUILD_DIR = "$(SRC_DIR)/build/$(1)")
 	@# check if the desired cmake configuration matches the cache then CMAKE_CACHE_CHECK stays empty
